@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Settings {
+  id            String   @id @default("default")
+  interests     String[] @default([])
+  customPrompt  String   @default("")
+  aiEndpoints   Json     @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model SearchHistory {
+  id        String   @id @default(cuid())
+  word      String
+  createdAt DateTime @default(now())
+
+  @@index([word])
+  @@index([createdAt])
+}
+
+model Vocabulary {
+  id              String   @id @default(cuid())
+  word            String   @unique
+  phonetic        String?
+  briefDefinition String
+  chineseDefinition String?
+  notes           String?
+  dictData        Json?
+  aiData          Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model RoleplaySession {
+  id         String   @id @default(cuid())
+  targetWord String
+  scenario   String
+  messages   Json     @default("[]")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
