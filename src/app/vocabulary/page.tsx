@@ -15,6 +15,8 @@ interface VocabEntry {
   briefDefinition: string
   chineseDefinition: string | null
   notes: string | null
+  imageData: string | null
+  imageMode: string | null
   createdAt: string
 }
 
@@ -128,6 +130,13 @@ export default function VocabularyPage() {
                     className="h-4 w-4 rounded"
                     onClick={e => e.stopPropagation()}
                   />
+                  {entry.imageData && (
+                    <img
+                      src={entry.imageData.startsWith("http") ? entry.imageData : `data:image/png;base64,${entry.imageData}`}
+                      alt={entry.word}
+                      className="h-10 w-10 rounded-md object-cover shrink-0"
+                    />
+                  )}
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{entry.word}</span>

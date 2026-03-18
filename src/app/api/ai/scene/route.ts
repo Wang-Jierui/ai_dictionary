@@ -1,5 +1,6 @@
 import { streamText, Output } from "ai"
 import { getModelForTask, buildSceneExpressionPrompt } from "@/lib/ai"
+import { prisma } from "@/lib/prisma"
 import { z } from "zod/v4"
 
 const sceneSchema = z.object({
@@ -24,6 +25,21 @@ export async function POST(request: Request) {
     model,
     output: Output.object({ schema: sceneSchema }),
     prompt: buildSceneExpressionPrompt(scene),
+    async onFinish({ text }) {
+      try {
+        const parsed = JSON.parse(text)
+        await prisma.sceneHistory.create({
+          data: {
+            scene: scene.trim(),
+            expressions: parsed.expressions,
+            dialogue: parsed.dialogue,
+            culturalNotes: parsed.culturalNotes ?? "",
+          },
+        })
+      } catch {
+        // parse failed — don't save incomplete results
+      }
+    },
   })
 
   return result.toTextStreamResponse()

@@ -227,8 +227,18 @@ function HomeContent() {
       const data = await res.json()
       if (data.base64) {
         setGeneratedImage(`data:image/png;base64,${data.base64}`)
+        fetch("/api/vocabulary/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ word: query, imageData: data.base64, imageMode: mode }),
+        })
       } else if (data.url) {
         setGeneratedImage(data.url)
+        fetch("/api/vocabulary/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ word: query, imageData: data.url, imageMode: mode }),
+        })
       } else if (data.error) {
         setError(data.error)
       }

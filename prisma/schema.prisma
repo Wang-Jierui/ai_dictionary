@@ -34,6 +34,8 @@ model Vocabulary {
   notes           String?
   dictData        Json?
   aiData          Json?
+  imageData       String?
+  imageMode       String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -47,4 +49,15 @@ model RoleplaySession {
   messages   Json     @default("[]")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+model SceneHistory {
+  id            String   @id @default(cuid())
+  scene         String
+  expressions   Json
+  dialogue      String
+  culturalNotes String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
 }
