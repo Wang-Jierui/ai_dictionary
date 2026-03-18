@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI 词典 (AI Dictionary)
 
-## Getting Started
+本项目是一个基于大语言模型（LLM）的智能英语学习工具，提供多义词详解、定制化例句、语境辨析、词源故事、脑洞记忆法、情景角色扮演等深度学习功能。
 
-First, run the development server:
+## 🚀 快速启动 (Docker 部署)
+
+强烈推荐使用 Docker Compose 一键启动（包含自动数据库迁移）：
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker compose up -d --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+访问 `http://localhost:3000`，并在右上角“设置”中配置你的 OpenAI 兼容 API Endpoint 即可开始使用。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 💾 数据备份与迁移 (Database Backup & Restore)
 
-## Learn More
+项目使用 PostgreSQL 作为数据库，数据持久化保存在 Docker 卷 `ai_dictionary_pgdata` 中。你可以使用以下命令进行备份和迁移：
 
-To learn more about Next.js, take a look at the following resources:
+### 1. 备份数据 (导出)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+在当前运行项目的服务器上执行，将数据库导出为一个压缩的 `.dump` 文件：
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+docker exec -t ai-dict-db pg_dump -U postgres -d ai_dictionary -F c > ai_dict_backup.dump
+```
+这会在当前目录下生成一个 `ai_dict_backup.dump` 文件，包含所有的生词本、设置和查询历史。
 
-## Deploy on Vercel
+### 2. 迁移与恢复数据 (导入)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+如果你换了新服务器，或者想要恢复数据，请按以下步骤操作：
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**第一步：在新服务器上启动空项目**
+```bash
+docker compose up -d --build
+```
+*(等待容器启动，`migrate` 容器会自动建好空表结构)*
+
+**第二步：上传备份文件**
+将 `ai_dict_backup.dump` 文件上传到新服务器的项目目录下。
+
+**第三步：清理旧数据结构 (防止主键冲突)**
+```bash
+docker exec -i ai-dict-db psql -U postgres -d ai_dictionary -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+```
+
+**第四步：执行恢复命令**
+```bash
+docker exec -i ai-dict-db pg_restore -U postgres -d ai_dictionary -1 < ai_dict_backup.dump
+```
+*(注意：`-1` 代表在一个事务中执行，确保数据完整性)*
+
+完成后，刷新网页，所有数据即已恢复。
+
+---
+
+## 📖 项目架构
+
+请参考项目根目录下的 `ARCHITECTURE.md` 查看详细的技术栈说明、核心运行流程图、模块解析以及数据流设计。
