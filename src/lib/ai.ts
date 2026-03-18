@@ -27,7 +27,7 @@ export async function getModelForTask(task: AITask) {
   if (!endpoint) throw new Error("No AI endpoint configured. Please set up in Settings.")
 
   const provider = createProvider(endpoint)
-  return provider(endpoint.model)
+  return provider.chat(endpoint.model)
 }
 
 // Prompt templates

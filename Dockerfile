@@ -14,7 +14,8 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 
-RUN npx prisma generate && npx prisma migrate --help > /dev/null 2>&1 || true
+ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
+RUN npx prisma generate
 
 # --- Build ---
 FROM base AS builder
