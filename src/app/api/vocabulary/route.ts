@@ -2,10 +2,19 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 
 export async function GET() {
-  const words = await prisma.vocabulary.findMany({
+  const vocabulary = await prisma.vocabulary.findMany({
     orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      word: true,
+      phonetic: true,
+      briefDefinition: true,
+      chineseDefinition: true,
+      notes: true,
+      createdAt: true,
+    }
   })
-  return NextResponse.json(words)
+  return NextResponse.json(vocabulary)
 }
 
 export async function POST(request: Request) {
