@@ -13,7 +13,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
-COPY src/generated ./src/generated
+
 RUN npx prisma generate && npx prisma migrate --help > /dev/null 2>&1 || true
 
 # --- Build ---
