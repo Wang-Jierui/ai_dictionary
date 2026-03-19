@@ -14,6 +14,33 @@ docker compose up -d --build
 
 ---
 
+## 🔑 API 用户隔离
+
+项目支持多用户独立配置 AI API，各用户的 API Key 和模型配置互不可见。单词库、场景历史等学习数据保持共享。
+
+### 使用方式
+
+1. 进入"设置"页面，在"AI 模型配置"区域点击"注册"创建账号（用户名 + 密码）
+2. 登录后配置的 API 端点仅绑定到你的账号，其他用户看不到
+3. 未登录时使用共享的默认 API 配置
+
+### 管理员功能
+
+设置页面底部有"用户管理"区域，输入管理密码后可以：
+
+- 查看所有已注册用户（用户名、API 配置数量、注册时间）
+- 删除用户
+- 重置用户密码（点击钥匙图标，输入新密码）
+
+管理密码通过环境变量 `ADMIN_PASSWORD` 配置，默认为 `admin123`。建议在生产环境中修改：
+
+```bash
+# .env 或 docker-compose.yml 中设置
+ADMIN_PASSWORD="your-secure-password"
+```
+
+---
+
 ## 💾 数据备份与迁移 (Database Backup & Restore)
 
 项目使用 PostgreSQL 作为数据库，数据持久化保存在 Docker 卷 `ai_dictionary_pgdata` 中。你可以使用以下命令进行备份和迁移：

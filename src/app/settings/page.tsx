@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Save, Plus, Trash2, Loader2, LogIn, LogOut, UserPlus } from "lucide-react"
+import { Save, Plus, Trash2, Loader2, LogIn, LogOut, UserPlus, Shield, KeyRound } from "lucide-react"
 import type { AIEndpointConfig, AITask } from "@/types/dictionary"
 
 const ALL_TASKS: { value: AITask; label: string }[] = [
@@ -35,6 +35,14 @@ export default function SettingsPage() {
   const [authPassword, setAuthPassword] = useState("")
   const [authError, setAuthError] = useState("")
   const [authLoading, setAuthLoading] = useState(false)
+
+  const [adminPassword, setAdminPassword] = useState("")
+  const [adminAuthed, setAdminAuthed] = useState(false)
+  const [adminError, setAdminError] = useState("")
+  const [adminUsers, setAdminUsers] = useState<{id: string, username: string, endpointCount: number, createdAt: string}[]>([])
+  const [adminLoading, setAdminLoading] = useState(false)
+  const [resetUserId, setResetUserId] = useState<string | null>(null)
+  const [resetNewPassword, setResetNewPassword] = useState("")
 
   useEffect(() => {
     Promise.all([
@@ -156,6 +164,48 @@ export default function SettingsPage() {
         return { ...ep, tasks }
       })
     )
+  }
+
+  const loadAdminUsers = async (pwd?: string) => {
+    const p = pwd ?? adminPassword
+    setAdminLoading(true)
+    setAdminError("")
+    const res = await fetch("/api/auth/admin", {
+      headers: { "x-admin-password": p },
+    })
+    if (!res.ok) {
+      const data = await res.json()
+      setAdminError(data.error || "验证失败")
+      setAdminAuthed(false)
+      setAdminLoading(false)
+      return
+    }
+    const data = await res.json()
+    setAdminUsers(data)
+    setAdminAuthed(true)
+    setAdminLoading(false)
+  }
+
+  const deleteUser = async (id: string) => {
+    await fetch(`/api/auth/admin?id=${id}`, {
+      method: "DELETE",
+      headers: { "x-admin-password": adminPassword },
+    })
+    loadAdminUsers()
+  }
+
+  const resetPassword = async (userId: string) => {
+    if (!resetNewPassword.trim()) return
+    await fetch("/api/auth/admin/reset", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-password": adminPassword,
+      },
+      body: JSON.stringify({ userId, newPassword: resetNewPassword }),
+    })
+    setResetUserId(null)
+    setResetNewPassword("")
   }
 
   if (loading) {
@@ -373,6 +423,102 @@ export default function SettingsPage() {
               </div>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Shield className="h-4 w-4" />
+            用户管理
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!adminAuthed ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">输入管理密码以查看和管理用户</p>
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  value={adminPassword}
+                  onChange={e => setAdminPassword(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && loadAdminUsers()}
+                  placeholder="管理密码"
+                  className="w-60"
+                />
+                <Button size="sm" onClick={() => loadAdminUsers()} disabled={adminLoading}>
+                  {adminLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Shield className="h-3.5 w-3.5" />}
+                  验证
+                </Button>
+              </div>
+              {adminError && <p className="text-sm text-destructive">{adminError}</p>}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">共 {adminUsers.length} 个用户</p>
+                <Button size="sm" variant="ghost" onClick={() => setAdminAuthed(false)}>
+                  退出管理
+                </Button>
+              </div>
+              {adminUsers.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">暂无注册用户</p>
+              ) : (
+                <div className="space-y-2">
+                  {adminUsers.map(u => (
+                    <div key={u.id} className="flex items-center justify-between rounded-lg border p-3">
+                      <div>
+                        <span className="font-medium text-sm">{u.username}</span>
+                        <span className="text-xs text-muted-foreground ml-2">
+                          {u.endpointCount} 个 API 配置
+                        </span>
+                        <span className="text-xs text-muted-foreground ml-2">
+                          {new Date(u.createdAt).toLocaleDateString("zh-CN")}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {resetUserId === u.id ? (
+                          <div className="flex gap-1">
+                            <Input
+                              type="password"
+                              value={resetNewPassword}
+                              onChange={e => setResetNewPassword(e.target.value)}
+                              onKeyDown={e => e.key === "Enter" && resetPassword(u.id)}
+                              placeholder="新密码"
+                              className="w-32 h-8 text-xs"
+                            />
+                            <Button size="sm" variant="outline" className="h-8" onClick={() => resetPassword(u.id)}>
+                              确认
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-8" onClick={() => { setResetUserId(null); setResetNewPassword("") }}>
+                              取消
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <Button
+                              variant="ghost" size="icon" className="h-8 w-8"
+                              title="重置密码"
+                              onClick={() => setResetUserId(u.id)}
+                            >
+                              <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
+                            </Button>
+                            <Button
+                              variant="ghost" size="icon" className="h-8 w-8"
+                              title="删除用户"
+                              onClick={() => deleteUser(u.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
