@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Save, Plus, Trash2, Loader2 } from "lucide-react"
+import { Save, Plus, Trash2, Loader2, LogIn, LogOut, UserPlus } from "lucide-react"
 import type { AIEndpointConfig, AITask } from "@/types/dictionary"
 
 const ALL_TASKS: { value: AITask; label: string }[] = [
@@ -30,19 +30,67 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  const [currentUser, setCurrentUser] = useState<string | null>(null)
+  const [authUsername, setAuthUsername] = useState("")
+  const [authPassword, setAuthPassword] = useState("")
+  const [authError, setAuthError] = useState("")
+  const [authLoading, setAuthLoading] = useState(false)
+
   useEffect(() => {
-    fetch("/api/settings")
-      .then(res => res.json())
-      .then(data => {
-        setInterests(data.interests ?? [])
-        setCustomPrompt(data.customPrompt ?? "")
-        const eps = typeof data.aiEndpoints === "string"
-          ? JSON.parse(data.aiEndpoints || "[]")
-          : data.aiEndpoints ?? []
-        setEndpoints(eps)
-        setLoading(false)
-      })
+    Promise.all([
+      fetch("/api/auth").then(r => r.json()),
+      fetch("/api/settings").then(r => r.json()),
+    ]).then(([authData, settingsData]) => {
+      setCurrentUser(authData.username ?? null)
+      setInterests(settingsData.interests ?? [])
+      setCustomPrompt(settingsData.customPrompt ?? "")
+      const eps = typeof settingsData.aiEndpoints === "string"
+        ? JSON.parse(settingsData.aiEndpoints || "[]")
+        : settingsData.aiEndpoints ?? []
+      setEndpoints(eps)
+      setLoading(false)
+    })
   }, [])
+
+  const reloadEndpoints = async () => {
+    const res = await fetch("/api/settings")
+    const data = await res.json()
+    const eps = typeof data.aiEndpoints === "string"
+      ? JSON.parse(data.aiEndpoints || "[]")
+      : data.aiEndpoints ?? []
+    setEndpoints(eps)
+  }
+
+  const authAction = async (action: "login" | "register") => {
+    if (!authUsername.trim() || !authPassword) return
+    setAuthLoading(true)
+    setAuthError("")
+
+    const res = await fetch("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: authUsername.trim(), password: authPassword, action }),
+    })
+    const data = await res.json()
+
+    if (!res.ok) {
+      setAuthError(data.error)
+      setAuthLoading(false)
+      return
+    }
+
+    setCurrentUser(data.username)
+    setAuthUsername("")
+    setAuthPassword("")
+    setAuthLoading(false)
+    await reloadEndpoints()
+  }
+
+  const logout = async () => {
+    await fetch("/api/auth", { method: "DELETE" })
+    setCurrentUser(null)
+    await reloadEndpoints()
+  }
 
   const save = async () => {
     setSaving(true)
@@ -195,13 +243,69 @@ export default function SettingsPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">AI 模型配置</CardTitle>
-            <Button variant="outline" size="sm" onClick={addEndpoint}>
-              <Plus className="h-4 w-4" />
-              添加模型
-            </Button>
+            <div className="flex items-center gap-2">
+              {currentUser && (
+                <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300">
+                  {currentUser}
+                </Badge>
+              )}
+              <Button variant="outline" size="sm" onClick={addEndpoint}>
+                <Plus className="h-4 w-4" />
+                添加模型
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!currentUser ? (
+            <div className="rounded-lg border border-dashed p-4 space-y-3">
+              <p className="text-sm text-muted-foreground">
+                登录后 API 配置将绑定到你的账号，其他用户不可见。未登录时使用共享配置。
+              </p>
+              <div className="flex gap-2 items-end">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">用户名</label>
+                  <Input
+                    value={authUsername}
+                    onChange={e => setAuthUsername(e.target.value)}
+                    placeholder="输入用户名"
+                    className="w-40"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">密码</label>
+                  <Input
+                    type="password"
+                    value={authPassword}
+                    onChange={e => setAuthPassword(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && authAction("login")}
+                    placeholder="输入密码"
+                    className="w-40"
+                  />
+                </div>
+                <Button size="sm" onClick={() => authAction("login")} disabled={authLoading}>
+                  <LogIn className="h-3.5 w-3.5" />
+                  登录
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => authAction("register")} disabled={authLoading}>
+                  <UserPlus className="h-3.5 w-3.5" />
+                  注册
+                </Button>
+              </div>
+              {authError && <p className="text-sm text-destructive">{authError}</p>}
+            </div>
+          ) : (
+            <div className="flex items-center justify-between rounded-lg border border-dashed p-3">
+              <p className="text-sm text-muted-foreground">
+                已登录为 <span className="font-medium text-foreground">{currentUser}</span>，API 配置仅你可见
+              </p>
+              <Button size="sm" variant="ghost" onClick={logout}>
+                <LogOut className="h-3.5 w-3.5" />
+                退出
+              </Button>
+            </div>
+          )}
+
           <p className="text-sm text-muted-foreground">
             配置 OpenAI 兼容的 API 端点，可为不同任务分配不同模型
           </p>

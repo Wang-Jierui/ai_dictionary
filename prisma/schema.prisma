@@ -72,3 +72,12 @@ model WordChat {
 
   @@index([word])
 }
+
+model UserApiConfig {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  aiEndpoints  Json     @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}

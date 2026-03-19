@@ -1,8 +1,8 @@
 import { createOpenAI } from "@ai-sdk/openai"
 import type { AIEndpointConfig, AITask } from "@/types/dictionary"
 import { prisma } from "./prisma"
+import { getCurrentUsername } from "./auth"
 
-// Create an OpenAI-compatible provider from endpoint config
 export function createProvider(config: AIEndpointConfig) {
   return createOpenAI({
     baseURL: config.baseURL,
@@ -10,18 +10,28 @@ export function createProvider(config: AIEndpointConfig) {
   })
 }
 
-// Get the endpoint config for a specific task
 export async function getEndpointForTask(task: AITask): Promise<AIEndpointConfig | null> {
+  const username = await getCurrentUsername()
+
+  if (username) {
+    const userConfig = await prisma.userApiConfig.findUnique({ where: { username } })
+    if (userConfig) {
+      const userEndpoints = userConfig.aiEndpoints as unknown as AIEndpointConfig[]
+      if (userEndpoints.length > 0) {
+        const endpoint = userEndpoints.find(e => e.tasks.includes(task)) ?? userEndpoints[0]
+        return endpoint ?? null
+      }
+    }
+  }
+
   const settings = await prisma.settings.findFirst()
   if (!settings) return null
 
   const endpoints = settings.aiEndpoints as unknown as AIEndpointConfig[]
-  // Find endpoint assigned to this task, or fall back to first endpoint
   const endpoint = endpoints.find(e => e.tasks.includes(task)) ?? endpoints[0]
   return endpoint ?? null
 }
 
-// Get provider + model for a task
 export async function getModelForTask(task: AITask) {
   const endpoint = await getEndpointForTask(task)
   if (!endpoint) throw new Error("No AI endpoint configured. Please set up in Settings.")
@@ -30,7 +40,6 @@ export async function getModelForTask(task: AITask) {
   return provider.chat(endpoint.model)
 }
 
-// Prompt templates
 export function buildLookupPrompt(word: string, interests: string[], customPrompt: string) {
   const interestStr = interests.length > 0
     ? `用户兴趣领域：${interests.join("、")}。请根据这些兴趣生成贴近用户生活的例句。`
