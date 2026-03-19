@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import type { DictionaryEntry, AIWordData } from "@/types/dictionary"
+import { WordChatPanel } from "@/components/word-chat-panel"
 
 const HISTORY_KEY = "ai-dict-search-history"
 const MAX_HISTORY = 8
@@ -516,6 +517,10 @@ function HomeContent() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {dictData && aiData && (
+        <WordChatPanel word={query} dictData={dictData} aiData={aiData} />
       )}
 
       {!dictData && !loadingDict && !error && (

@@ -61,3 +61,14 @@ model SceneHistory {
 
   @@index([createdAt])
 }
+
+model WordChat {
+  id           String   @id @default(cuid())
+  word         String   @unique
+  messages     Json     @default("[]")
+  activeLeafId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([word])
+}

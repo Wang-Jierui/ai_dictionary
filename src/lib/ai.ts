@@ -130,3 +130,20 @@ export function buildSceneExpressionPrompt(scene: string) {
   "culturalNotes": "文化差异说明（没有则返回空字符串）"
 }`
 }
+
+export function buildWordChatSystemPrompt(word: string, dictData: unknown, aiData: unknown) {
+  const dictStr = dictData ? JSON.stringify(dictData) : "无词典数据"
+  const aiStr = aiData ? JSON.stringify(aiData) : "无AI分析数据"
+
+  return `你是一个专业的英语学习助手。用户正在学习单词 "${word}"。
+
+以下是该单词的词典数据和AI分析内容，你可以基于这些信息回答用户的问题：
+
+【词典数据】
+${dictStr}
+
+【AI分析】
+${aiStr}
+
+请用中文回答用户关于这个单词的任何问题，包括但不限于：用法、搭配、语境、近义词区别、语法要点、文化背景等。回答要简洁实用。`
+}
