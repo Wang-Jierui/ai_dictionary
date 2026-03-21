@@ -98,6 +98,7 @@ function HomeContent() {
     setHistory(getHistory())
 
     let fetchedDict: DictionaryEntry | null = null
+    let fetchedAi: AIWordData | null = null
 
     const aiPromise = fetch("/api/ai/lookup", {
       method: "POST",
@@ -140,17 +141,17 @@ function HomeContent() {
       try {
         const parsed = JSON.parse(accumulated) as AIWordData
         setAiData(parsed)
-        if (fetchedDict) {
-          autoSave(trimmed, fetchedDict, parsed)
-        }
+        fetchedAi = parsed
       } catch {
-        setAiData({
+        const fallback = {
           chineseDefinition: "",
           personalizedExamples: [],
           nuanceAnalysis: accumulated,
           etymologyStory: "",
           mnemonicHook: "",
-        })
+        }
+        setAiData(fallback)
+        fetchedAi = fallback
       }
       setLoadingAI(false)
     }).catch(() => {
@@ -174,13 +175,10 @@ function HomeContent() {
 
     await Promise.all([dictPromise, aiPromise])
 
-    if (fetchedDict && !fromCache) {
-      const currentAi = aiData
-      if (currentAi) {
-        autoSave(trimmed, fetchedDict, currentAi)
-      }
+    if (fetchedDict && fetchedAi && !fromCache) {
+      autoSave(trimmed, fetchedDict, fetchedAi)
     }
-  }, [autoSave, fromCache, aiData])
+  }, [autoSave, fromCache])
 
   const regenerateMnemonic = async () => {
     if (!query || loadingMnemonic) return

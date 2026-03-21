@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
+import remarkGfm from "remark-gfm"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import { Button } from "@/components/ui/button"
@@ -240,7 +241,7 @@ export function WordChatPanel({ word, dictData, aiData }: WordChatPanelProps) {
                           }`}
                         >
                           {msg.role === "assistant" ? (
-                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{msg.content}</ReactMarkdown>
+                            <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>{msg.content}</ReactMarkdown>
                           ) : (
                             msg.content
                           )}

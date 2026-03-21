@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
@@ -267,7 +268,7 @@ function RoleplayContent() {
               }`}
             >
               {msg.role === "assistant" ? (
-                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{msg.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>{msg.content}</ReactMarkdown>
               ) : (
                 msg.content
               )}
