@@ -46,6 +46,12 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Missing id" }, { status: 400 })
   }
 
+  const entry = await prisma.vocabulary.findUnique({ where: { id }, select: { word: true } })
   await prisma.vocabulary.delete({ where: { id } })
+
+  if (entry) {
+    await prisma.wordChat.deleteMany({ where: { word: entry.word } })
+  }
+
   return NextResponse.json({ success: true })
 }
