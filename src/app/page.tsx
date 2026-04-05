@@ -36,23 +36,49 @@ export default function HomePage() {
   )
 }
 
+interface WordResult {
+  word: string
+  dictData: DictionaryEntry | null
+  aiData: AIWordData | null
+  loadingDict: boolean
+  loadingAI: boolean
+  loadingMnemonic: boolean
+  error: string
+  generatedImage: string | null
+  loadingImage: boolean
+  imageMode: "mood" | "meme"
+  fromCache: boolean
+}
+
 function HomeContent() {
   const searchParams = useSearchParams()
   const wordParam = searchParams.get("word")
   const [query, setQuery] = useState(wordParam ?? "")
-  const [dictData, setDictData] = useState<DictionaryEntry | null>(null)
-  const [aiData, setAiData] = useState<AIWordData | null>(null)
-  const [loadingDict, setLoadingDict] = useState(false)
-  const [loadingAI, setLoadingAI] = useState(false)
-  const [loadingMnemonic, setLoadingMnemonic] = useState(false)
+  const [results, setResults] = useState<Map<string, WordResult>>(new Map())
+  const [activeWord, setActiveWord] = useState<string>("")
   const [history, setHistory] = useState<string[]>([])
-  const [error, setError] = useState("")
-  const [generatedImage, setGeneratedImage] = useState<string | null>(null)
-  const [loadingImage, setLoadingImage] = useState(false)
-  const [imageMode, setImageMode] = useState<"mood" | "meme">("mood")
-  const [fromCache, setFromCache] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const initialized = useRef(false)
+  
+  const activeResult = activeWord ? results.get(activeWord) : null
+  const dictData = activeResult?.dictData ?? null
+  const aiData = activeResult?.aiData ?? null
+  const loadingDict = activeResult?.loadingDict ?? false
+  const loadingAI = activeResult?.loadingAI ?? false
+  const loadingMnemonic = activeResult?.loadingMnemonic ?? false
+  const error = activeResult?.error ?? ""
+  const generatedImage = activeResult?.generatedImage ?? null
+  const loadingImage = activeResult?.loadingImage ?? false
+  const imageMode = activeResult?.imageMode ?? "mood"
+  const fromCache = activeResult?.fromCache ?? false
+
+  const updateResult = useCallback((word: string, patch: Partial<WordResult>) => {
+    setResults(prev => {
+      const existing = prev.get(word)
+      if (!existing) return prev
+      return new Map(prev).set(word, { ...existing, ...patch })
+    })
+  }, [])
 
   useEffect(() => {
     setHistory(getHistory())
@@ -86,52 +112,51 @@ function HomeContent() {
     if (!trimmed) return
 
     setQuery(trimmed)
-    setError("")
-    setDictData(null)
-    setAiData(null)
-    setGeneratedImage(null)
-    setFromCache(false)
-    setLoadingDict(true)
-    setLoadingAI(true)
-
     addHistory(trimmed)
     setHistory(getHistory())
+    setActiveWord(trimmed)
+
+    const initial: WordResult = {
+      word: trimmed,
+      dictData: null, aiData: null,
+      loadingDict: true, loadingAI: true, loadingMnemonic: false,
+      error: "", generatedImage: null, loadingImage: false,
+      imageMode: "mood", fromCache: false,
+    }
+    setResults(prev => new Map(prev).set(trimmed, initial))
 
     let fetchedDict: DictionaryEntry | null = null
     let fetchedAi: AIWordData | null = null
+    let isCached = false
 
     const aiPromise = fetch("/api/ai/lookup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ word: trimmed }),
     }).then(async res => {
-      if (!res.ok) {
-        setLoadingAI(false)
-        return
-      }
+      if (!res.ok) { updateResult(trimmed, { loadingAI: false }); return }
 
       const contentType = res.headers.get("content-type") ?? ""
       if (contentType.includes("application/json")) {
         const data = await res.json()
         if (data.cached) {
-          setFromCache(true)
+          isCached = true
+          const patch: Partial<WordResult> = { fromCache: true, aiData: data.aiData as AIWordData, loadingAI: false }
           if (data.dictData) {
-            setDictData(data.dictData as DictionaryEntry)
             fetchedDict = data.dictData as DictionaryEntry
-            setLoadingDict(false)
+            patch.dictData = fetchedDict
+            patch.loadingDict = false
           }
-          setAiData(data.aiData as AIWordData)
-          setLoadingAI(false)
+          updateResult(trimmed, patch)
           return
         }
       }
 
       const reader = res.body?.getReader()
-      if (!reader) { setLoadingAI(false); return }
+      if (!reader) { updateResult(trimmed, { loadingAI: false }); return }
 
       const decoder = new TextDecoder()
       let accumulated = ""
-
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -139,24 +164,12 @@ function HomeContent() {
       }
 
       try {
-        const parsed = JSON.parse(accumulated) as AIWordData
-        setAiData(parsed)
-        fetchedAi = parsed
+        fetchedAi = JSON.parse(accumulated) as AIWordData
       } catch {
-        const fallback = {
-          chineseDefinition: "",
-          personalizedExamples: [],
-          nuanceAnalysis: accumulated,
-          etymologyStory: "",
-          mnemonicHook: "",
-        }
-        setAiData(fallback)
-        fetchedAi = fallback
+        fetchedAi = { chineseDefinition: "", personalizedExamples: [], nuanceAnalysis: accumulated, etymologyStory: "", mnemonicHook: "" }
       }
-      setLoadingAI(false)
-    }).catch(() => {
-      setLoadingAI(false)
-    })
+      updateResult(trimmed, { aiData: fetchedAi, loadingAI: false })
+    }).catch(() => updateResult(trimmed, { loadingAI: false }))
 
     const dictPromise = fetch(`/api/dictionary?word=${encodeURIComponent(trimmed)}`)
       .then(async res => {
@@ -164,31 +177,29 @@ function HomeContent() {
         return res.json() as Promise<DictionaryEntry>
       })
       .then(data => {
-        setDictData(data)
         fetchedDict = data
-        setLoadingDict(false)
+        updateResult(trimmed, { dictData: data, loadingDict: false })
       })
       .catch(err => {
-        if (!fromCache) setError(err.message)
-        setLoadingDict(false)
+        updateResult(trimmed, { error: isCached ? "" : err.message, loadingDict: false })
       })
 
     await Promise.all([dictPromise, aiPromise])
 
-    if (fetchedDict && fetchedAi && !fromCache) {
+    if (fetchedDict && fetchedAi && !isCached) {
       autoSave(trimmed, fetchedDict, fetchedAi)
     }
-  }, [autoSave, fromCache])
+  }, [autoSave, updateResult])
 
   const regenerateMnemonic = async () => {
-    if (!query || loadingMnemonic) return
-    setLoadingMnemonic(true)
+    if (!activeWord || loadingMnemonic) return
+    updateResult(activeWord, { loadingMnemonic: true })
 
     try {
       const res = await fetch("/api/ai/mnemonic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ word: query }),
+        body: JSON.stringify({ word: activeWord }),
       })
       if (!res.ok) return
 
@@ -203,48 +214,50 @@ function HomeContent() {
         text += decoder.decode(value, { stream: true })
       }
 
-      setAiData(prev => prev ? { ...prev, mnemonicHook: text } : prev)
+      const result = results.get(activeWord)
+      if (result?.aiData) {
+        updateResult(activeWord, { aiData: { ...result.aiData, mnemonicHook: text } })
+      }
     } finally {
-      setLoadingMnemonic(false)
+      updateResult(activeWord, { loadingMnemonic: false })
     }
   }
 
   const generateWordImage = async (mode: "mood" | "meme") => {
-    if (!query || loadingImage) return
-    setLoadingImage(true)
-    setImageMode(mode)
-    setGeneratedImage(null)
+    if (!activeWord || loadingImage) return
+    updateResult(activeWord, { loadingImage: true, imageMode: mode, generatedImage: null })
 
     try {
-      const meaning = dictData?.meanings[0]?.definitions[0]?.definition ?? query
+      const meaning = dictData?.meanings[0]?.definitions[0]?.definition ?? activeWord
       const res = await fetch("/api/ai/image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ word: query, meaning, mode }),
+        body: JSON.stringify({ word: activeWord, meaning, mode }),
       })
 
       const data = await res.json()
       if (data.base64) {
-        setGeneratedImage(`data:image/png;base64,${data.base64}`)
+        const img = `data:image/png;base64,${data.base64}`
+        updateResult(activeWord, { generatedImage: img })
         fetch("/api/vocabulary/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ word: query, imageData: data.base64, imageMode: mode }),
+          body: JSON.stringify({ word: activeWord, imageData: data.base64, imageMode: mode }),
         })
       } else if (data.url) {
-        setGeneratedImage(data.url)
+        updateResult(activeWord, { generatedImage: data.url })
         fetch("/api/vocabulary/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ word: query, imageData: data.url, imageMode: mode }),
+          body: JSON.stringify({ word: activeWord, imageData: data.url, imageMode: mode }),
         })
       } else if (data.error) {
-        setError(data.error)
+        updateResult(activeWord, { error: data.error })
       }
     } catch {
-      setError("图片生成失败")
+      updateResult(activeWord, { error: "图片生成失败" })
     } finally {
-      setLoadingImage(false)
+      updateResult(activeWord, { loadingImage: false })
     }
   }
 
@@ -255,6 +268,18 @@ function HomeContent() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") searchWord(query)
+  }
+
+  const removeResult = (word: string) => {
+    setResults(prev => {
+      const next = new Map(prev)
+      next.delete(word)
+      return next
+    })
+    if (activeWord === word) {
+      const remaining = [...results.keys()].filter(w => w !== word)
+      setActiveWord(remaining[remaining.length - 1] ?? "")
+    }
   }
 
   return (
@@ -273,10 +298,33 @@ function HomeContent() {
               autoFocus
             />
           </div>
-          <Button onClick={() => searchWord(query)} disabled={loadingDict || loadingAI} className="h-11 px-6">
-            {loadingDict ? <Loader2 className="h-4 w-4 animate-spin" /> : "查询"}
+          <Button onClick={() => searchWord(query)} className="h-11 px-6">
+            查询
           </Button>
         </div>
+
+        {results.size > 0 && (
+          <div className="flex items-center gap-1 flex-wrap">
+            {[...results.entries()].map(([w, r]) => (
+              <div
+                key={w}
+                className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm cursor-pointer border transition-colors ${
+                  activeWord === w
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-muted hover:bg-muted/80 border-transparent"
+                }`}
+                onClick={() => setActiveWord(w)}
+              >
+                {(r.loadingDict || r.loadingAI) && <Loader2 className="h-3 w-3 animate-spin" />}
+                {w}
+                <span
+                  className="ml-1 opacity-60 hover:opacity-100"
+                  onClick={e => { e.stopPropagation(); removeResult(w) }}
+                >×</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {history.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -497,7 +545,7 @@ function HomeContent() {
                 <div className="space-y-2">
                   <img
                     src={generatedImage}
-                    alt={`${query} ${imageMode === "mood" ? "意境图" : "梗图"}`}
+                    alt={`${activeWord} ${imageMode === "mood" ? "意境图" : "梗图"}`}
                     className="w-full max-w-md rounded-lg border mx-auto"
                   />
                   <div className="flex gap-2 justify-center">
@@ -518,10 +566,10 @@ function HomeContent() {
       )}
 
       {dictData && aiData && (
-        <WordChatPanel word={query} dictData={dictData} aiData={aiData} />
+        <WordChatPanel word={activeWord} dictData={dictData} aiData={aiData} />
       )}
 
-      {!dictData && !loadingDict && !error && (
+      {results.size === 0 && (
         <div className="text-center py-20 text-muted-foreground">
           <BookOpen className="h-12 w-12 mx-auto mb-4 opacity-30" />
           <p className="text-lg">输入单词，开始探索</p>
