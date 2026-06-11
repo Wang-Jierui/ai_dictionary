@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation"
 import { Suspense, useState, useRef, useEffect, useCallback } from "react"
-import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, Brain, History as HistoryIcon, BookOpen, ImageIcon, Languages } from "lucide-react"
+import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, Brain, History as HistoryIcon, BookOpen, ImageIcon, Languages, Eye, Map as MapIcon, Link2, Split, AlertTriangle, Lightbulb, HelpCircle, PenTool } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -54,7 +54,7 @@ function HomeContent() {
   const searchParams = useSearchParams()
   const wordParam = searchParams.get("word")
   const [query, setQuery] = useState(wordParam ?? "")
-  const [results, setResults] = useState<Map<string, WordResult>>(new Map())
+  const [results, setResults] = useState<Map<string, WordResult>>(new Map<string, WordResult>())
   const [activeWord, setActiveWord] = useState<string>("")
   const [history, setHistory] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
@@ -447,7 +447,104 @@ function HomeContent() {
 
       {aiData && (
         <div className="space-y-4">
-          {aiData.personalizedExamples.length > 0 && (
+          {aiData.coreImage && (
+            <Card className="bg-primary/5 border-primary/20">
+              <CardContent className="pt-6 flex items-start gap-3">
+                <Eye className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                <div>
+                  <h4 className="font-semibold text-primary mb-1">核心意象</h4>
+                  <p className="text-sm leading-relaxed">{aiData.coreImage}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiData.senseMap && aiData.senseMap.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <MapIcon className="h-4 w-4 text-indigo-500" />
+                  词义图谱
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {aiData.senseMap.map((sense, i) => (
+                    <div key={i} className="bg-muted/50 p-3 rounded-md border">
+                      <div className="font-medium text-sm mb-1">{sense.meaning}</div>
+                      <div className="text-xs text-muted-foreground">{sense.usage}</div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiData.collocations && aiData.collocations.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Link2 className="h-4 w-4 text-orange-500" />
+                  地道搭配
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-2">
+                  {aiData.collocations.map((col, i) => (
+                    <Badge key={i} className="px-3 py-1.5 text-sm font-normal">
+                      {col}
+                    </Badge>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiData.synonymBoundaries && aiData.synonymBoundaries.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Split className="h-4 w-4 text-teal-500" />
+                  近义词边界
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {aiData.synonymBoundaries.map((syn, i) => (
+                    <div key={i} className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+                      <Badge className="w-fit shrink-0 bg-teal-50/50 text-teal-700 border-teal-200">
+                        vs {syn.synonym}
+                      </Badge>
+                      <p className="text-sm leading-relaxed text-muted-foreground">{syn.difference}</p>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiData.commonMistakes && aiData.commonMistakes.length > 0 && (
+            <Card className="border-red-200 bg-red-50/30">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base text-red-700">
+                  <AlertTriangle className="h-4 w-4" />
+                  常见误区
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2">
+                  {aiData.commonMistakes.map((mistake, i) => (
+                    <li key={i} className="text-sm leading-relaxed text-red-800/90 flex items-start gap-2">
+                      <span className="text-red-500 mt-0.5">•</span>
+                      {mistake}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiData.personalizedExamples && aiData.personalizedExamples.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -511,6 +608,65 @@ function HomeContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm leading-relaxed whitespace-pre-wrap">{aiData.mnemonicHook}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiData.multiHookMemory && aiData.multiHookMemory.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Lightbulb className="h-4 w-4 text-yellow-500" />
+                  多维记忆钩子
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-3">
+                  {aiData.multiHookMemory.map((hook, i) => (
+                    <li key={i} className="text-sm leading-relaxed flex items-start gap-2">
+                      <span className="text-yellow-500 mt-0.5">💡</span>
+                      {hook}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiData.activeRecall && (
+            <Card className="bg-slate-50/50 border-slate-200">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base text-slate-700">
+                  <HelpCircle className="h-4 w-4" />
+                  主动回想
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-slate-800">{aiData.activeRecall.question}</p>
+                  <details className="group">
+                    <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 transition-colors select-none">
+                      点击查看答案
+                    </summary>
+                    <div className="mt-2 p-3 bg-white rounded-md border border-slate-100 text-sm text-slate-600">
+                      {aiData.activeRecall.answer}
+                    </div>
+                  </details>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiData.practiceTask && (
+            <Card className="bg-blue-50/30 border-blue-100">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base text-blue-700">
+                  <PenTool className="h-4 w-4" />
+                  实践任务
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm leading-relaxed text-blue-900/80">{aiData.practiceTask}</p>
               </CardContent>
             </Card>
           )}

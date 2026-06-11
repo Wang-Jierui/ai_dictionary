@@ -32,7 +32,7 @@ export async function POST(request: Request) {
   const model = await getModelForTask("lookup")
   const systemPrompt = buildWordChatSystemPrompt(word, dictData, aiData)
 
-  let chat = await prisma.wordChat.findUnique({ where: { word: wordLower } })
+  const chat = await prisma.wordChat.findUnique({ where: { word: wordLower } })
   const existingMessages: ChatMessage[] = chat
     ? (chat.messages as unknown as ChatMessage[])
     : []

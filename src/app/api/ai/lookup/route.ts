@@ -10,6 +10,14 @@ const aiWordSchema = z.object({
   nuanceAnalysis: z.string(),
   etymologyStory: z.string(),
   mnemonicHook: z.string(),
+  coreImage: z.string().optional(),
+  senseMap: z.array(z.object({ meaning: z.string(), usage: z.string() })).optional(),
+  collocations: z.array(z.string()).optional(),
+  synonymBoundaries: z.array(z.object({ synonym: z.string(), difference: z.string() })).optional(),
+  commonMistakes: z.array(z.string()).optional(),
+  multiHookMemory: z.array(z.string()).optional(),
+  activeRecall: z.object({ question: z.string(), answer: z.string() }).optional(),
+  practiceTask: z.string().optional(),
 })
 
 export async function POST(request: Request) {

@@ -34,6 +34,16 @@ export interface AIWordData {
   etymologyStory: string
   mnemonicHook: string
   chineseDefinition: string
+  
+  // Richer structured learning-card fields
+  coreImage?: string
+  senseMap?: { meaning: string; usage: string }[]
+  collocations?: string[]
+  synonymBoundaries?: { synonym: string; difference: string }[]
+  commonMistakes?: string[]
+  multiHookMemory?: string[]
+  activeRecall?: { question: string; answer: string }
+  practiceTask?: string
 }
 
 // Combined word result
