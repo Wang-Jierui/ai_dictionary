@@ -2,11 +2,12 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BookOpen, Settings, BookmarkCheck, Pen, Swords, Languages } from "lucide-react"
+import { BookOpen, Settings, BookmarkCheck, Pen, Swords, Languages, ListPlus } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const navItems = [
   { href: "/", label: "查词", icon: BookOpen },
+  { href: "/batch", label: "批量查词", icon: ListPlus },
   { href: "/vocabulary", label: "生词本", icon: BookmarkCheck },
   { href: "/story", label: "串词故事", icon: Pen },
   { href: "/roleplay", label: "实战对话", icon: Swords },

@@ -1,24 +1,5 @@
-import { streamText, Output } from "ai"
-import { getModelForTask, buildLookupPrompt } from "@/lib/ai"
-import { prisma } from "@/lib/prisma"
-import { z } from "zod/v4"
 import { NextResponse } from "next/server"
-
-const aiWordSchema = z.object({
-  chineseDefinition: z.string(),
-  personalizedExamples: z.array(z.string()),
-  nuanceAnalysis: z.string(),
-  etymologyStory: z.string(),
-  mnemonicHook: z.string(),
-  coreImage: z.string().optional(),
-  senseMap: z.array(z.object({ meaning: z.string(), usage: z.string() })).optional(),
-  collocations: z.array(z.string()).optional(),
-  synonymBoundaries: z.array(z.object({ synonym: z.string(), difference: z.string() })).optional(),
-  commonMistakes: z.array(z.string()).optional(),
-  multiHookMemory: z.array(z.string()).optional(),
-  activeRecall: z.object({ question: z.string(), answer: z.string() }).optional(),
-  practiceTask: z.string().optional(),
-})
+import { findCachedLookup, getLookupSettings, normalizeLookupWord, recordSearchHistory, streamAiLookup } from "@/lib/lookup-service"
 
 export async function POST(request: Request) {
   const { word } = await request.json()
@@ -27,11 +8,11 @@ export async function POST(request: Request) {
     return new Response("Missing word", { status: 400 })
   }
 
-  const wordLower = word.trim().toLowerCase()
+  const wordLower = normalizeLookupWord(word)
 
-  const cached = await prisma.vocabulary.findUnique({ where: { word: wordLower } })
-  if (cached?.aiData) {
-    await prisma.searchHistory.create({ data: { word: wordLower } })
+  const cached = await findCachedLookup(wordLower)
+  if (cached) {
+    await recordSearchHistory([wordLower])
     return NextResponse.json({
       cached: true,
       dictData: cached.dictData,
@@ -39,20 +20,9 @@ export async function POST(request: Request) {
     })
   }
 
-  const settings = await prisma.settings.findFirst()
-  const interests = settings?.interests ?? []
-  const customPrompt = settings?.customPrompt ?? ""
+  await recordSearchHistory([wordLower])
 
-  await prisma.searchHistory.create({ data: { word: wordLower } })
-
-  const model = await getModelForTask("lookup")
-  const prompt = buildLookupPrompt(word, interests as string[], customPrompt)
-
-  const result = streamText({
-    model,
-    output: Output.object({ schema: aiWordSchema }),
-    prompt,
-  })
-
+  const settings = await getLookupSettings()
+  const result = await streamAiLookup(word, settings)
   return result.toTextStreamResponse()
 }
