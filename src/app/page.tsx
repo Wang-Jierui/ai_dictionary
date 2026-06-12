@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation"
 import { Suspense, useState, useRef, useEffect, useCallback } from "react"
-import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, Brain, History as HistoryIcon, BookOpen, ImageIcon, Languages, Eye, Map as MapIcon, Link2, Split, AlertTriangle, Lightbulb, HelpCircle, PenTool } from "lucide-react"
+import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, Brain, History as HistoryIcon, BookOpen, ImageIcon, Languages, Eye, Map as MapIcon, Link2, Split, AlertTriangle, Lightbulb, HelpCircle, PenTool, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -237,6 +237,7 @@ function HomeContent() {
   const [activeWord, setActiveWord] = useState<string>("")
   const [history, setHistory] = useState<string[]>([])
   const [reviewQueue, setReviewQueue] = useState<string[]>([])
+  const [deletingWord, setDeletingWord] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const initialized = useRef(false)
   
@@ -306,7 +307,7 @@ function HomeContent() {
     })
   }, [])
 
-  const searchWord = useCallback(async (word: string) => {
+  const searchWord = useCallback(async (word: string, options?: { forceRefresh?: boolean }) => {
     const trimmed = word.trim()
     if (!trimmed) return
 
@@ -331,7 +332,7 @@ function HomeContent() {
     const aiPromise = fetch("/api/ai/lookup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ word: trimmed }),
+      body: JSON.stringify({ word: trimmed, forceRefresh: options?.forceRefresh === true }),
     }).then(async res => {
       if (!res.ok) { updateResult(trimmed, { loadingAI: false }); return }
 
@@ -488,6 +489,48 @@ function HomeContent() {
     }
   }
 
+  const retryCurrentWord = () => {
+    if (!activeWord || loadingDict || loadingAI) return
+    searchWord(activeWord, { forceRefresh: true })
+  }
+
+  const deleteCurrentWord = async () => {
+    if (!activeWord || deletingWord) return
+
+    const shouldDelete = window.confirm(`确定从生词本删除 “${activeWord}” 吗？相关 AI 问答记录也会一起删除。`)
+    if (!shouldDelete) return
+
+    const wordToDelete = activeWord
+    setDeletingWord(true)
+
+    try {
+      const res = await fetch(`/api/vocabulary?word=${encodeURIComponent(wordToDelete)}`, { method: "DELETE" })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "删除失败")
+      }
+
+      const nextQueue = reviewQueue.filter(word => word !== wordToDelete)
+      if (nextQueue.length > 0) {
+        sessionStorage.setItem(REVIEW_QUEUE_KEY, JSON.stringify(nextQueue))
+        setReviewQueue(nextQueue)
+
+        const nextIndex = Math.min(currentIndex === -1 ? 0 : currentIndex, nextQueue.length - 1)
+        const nextWord = nextQueue[nextIndex]
+        searchWord(nextWord)
+        window.history.pushState({}, "", `/?word=${encodeURIComponent(nextWord)}`)
+      } else {
+        sessionStorage.removeItem(REVIEW_QUEUE_KEY)
+        setReviewQueue([])
+        removeResult(wordToDelete)
+      }
+    } catch (err) {
+      updateResult(wordToDelete, { error: err instanceof Error ? err.message : "删除失败" })
+    } finally {
+      setDeletingWord(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -635,8 +678,8 @@ function HomeContent() {
       {dictData && (
         <Card>
           <CardHeader className="pb-3">
-            <div className="flex items-start justify-between">
-              <div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
                 <CardTitle className="text-2xl font-bold">{dictData.word}</CardTitle>
                 <div className="mt-1 flex items-center gap-3 text-muted-foreground">
                   {dictData.phonetic && (
@@ -666,7 +709,20 @@ function HomeContent() {
                   </div>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={retryCurrentWord}
+                  disabled={loadingDict || loadingAI}
+                >
+                  {loadingDict || loadingAI ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  重新查询
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -674,6 +730,20 @@ function HomeContent() {
                 >
                   <Swords className="h-4 w-4" />
                   去实战
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={deleteCurrentWord}
+                  disabled={deletingWord}
+                >
+                  {deletingWord ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  删除当前词
                 </Button>
               </div>
             </div>

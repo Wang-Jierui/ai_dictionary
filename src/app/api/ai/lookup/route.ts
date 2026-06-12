@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { findCachedLookup, getLookupSettings, normalizeLookupWord, recordSearchHistory, streamAiLookup } from "@/lib/lookup-service"
 
 export async function POST(request: Request) {
-  const { word } = await request.json()
+  const { word, forceRefresh } = await request.json()
 
   if (!word || typeof word !== "string") {
     return new Response("Missing word", { status: 400 })
@@ -10,7 +10,7 @@ export async function POST(request: Request) {
 
   const wordLower = normalizeLookupWord(word)
 
-  const cached = await findCachedLookup(wordLower)
+  const cached = forceRefresh ? null : await findCachedLookup(wordLower)
   if (cached) {
     await recordSearchHistory([wordLower])
     return NextResponse.json({

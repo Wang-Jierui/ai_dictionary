@@ -41,17 +41,25 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url)
   const id = searchParams.get("id")
+  const word = searchParams.get("word")?.trim().toLowerCase()
 
-  if (!id) {
-    return NextResponse.json({ error: "Missing id" }, { status: 400 })
+  if (!id && !word) {
+    return NextResponse.json({ error: "Missing id or word" }, { status: 400 })
   }
 
-  const entry = await prisma.vocabulary.findUnique({ where: { id }, select: { word: true } })
-  await prisma.vocabulary.delete({ where: { id } })
+  const entry = id
+    ? await prisma.vocabulary.findUnique({ where: { id }, select: { id: true, word: true } })
+    : word
+      ? await prisma.vocabulary.findUnique({ where: { word }, select: { id: true, word: true } })
+      : null
 
-  if (entry) {
-    await prisma.wordChat.deleteMany({ where: { word: entry.word } })
+  if (!entry) {
+    return NextResponse.json({ error: "Vocabulary entry not found" }, { status: 404 })
   }
+
+  await prisma.vocabulary.delete({ where: { id: entry.id } })
+
+  await prisma.wordChat.deleteMany({ where: { word: entry.word } })
 
   return NextResponse.json({ success: true })
 }

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
-import { Loader2, Upload, Play, CheckCircle2, XCircle, FileText, ListPlus, AlertTriangle } from "lucide-react"
+import { Loader2, Upload, Play, CheckCircle2, XCircle, FileText, ListPlus, AlertTriangle, RefreshCw } from "lucide-react"
 import type { DictionaryEntry, AIWordData } from "@/types/dictionary"
 
 const MAX_UNIQUE_LOOKUP_WORDS = 50
@@ -19,6 +19,8 @@ interface BatchLookupResult {
   aiData: AIWordData | null
   error?: string
 }
+
+type LookupQueueItem = Pick<BatchLookupResult, "index" | "word">
 
 export default function BatchPage() {
   const [inputText, setInputText] = useState("")
@@ -52,6 +54,86 @@ export default function BatchPage() {
     }
   }
 
+  const lookupQueuedWords = async (items: LookupQueueItem[]) => {
+    if (items.length === 0) return
+
+    setError("")
+    setLoading(true)
+
+    try {
+      let currentIndex = 0
+      const activePromises: Promise<void>[] = []
+
+      const processNext = async (): Promise<void> => {
+        if (currentIndex >= items.length) return
+        
+        const item = items[currentIndex]
+        currentIndex += 1
+
+        setResults(prev => {
+          const next = [...prev]
+          next[item.index] = {
+            ...next[item.index],
+            status: "requesting",
+            cached: false,
+            dictData: null,
+            aiData: null,
+            error: undefined,
+          }
+          return next
+        })
+
+        try {
+          const res = await fetch("/api/ai/batch-lookup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ words: [item.word], concurrency: 1 }),
+          })
+
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            throw new Error(data.error || "查询失败")
+          }
+
+          const data = await res.json()
+          if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+            const result = data.results[0]
+            setResults(prev => {
+              const next = [...prev]
+              next[item.index] = { ...result, index: item.index }
+              return next
+            })
+          } else {
+            throw new Error("返回数据格式错误")
+          }
+        } catch (err) {
+          setResults(prev => {
+            const next = [...prev]
+            next[item.index] = { 
+              ...next[item.index], 
+              status: "error", 
+              error: err instanceof Error ? err.message : "发生未知错误",
+            }
+            return next
+          })
+        }
+
+        await processNext()
+      }
+
+      const concurrency = Math.min(3, items.length)
+      for (let i = 0; i < concurrency; i++) {
+        activePromises.push(processNext())
+      }
+
+      await Promise.all(activePromises)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "发生未知错误")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleBatchLookup = async () => {
     setError("")
     setResults([])
@@ -79,73 +161,15 @@ export default function BatchPage() {
       aiData: null,
     }))
     setResults(initialResults)
-    setLoading(true)
+    await lookupQueuedWords(initialResults.map(({ index, word }) => ({ index, word })))
+  }
 
-    try {
-      let currentIndex = 0
-      const activePromises: Promise<void>[] = []
+  const retryFailedLookups = async () => {
+    const failedItems = results
+      .filter(result => result.status === "error")
+      .map(({ index, word }) => ({ index, word }))
 
-      const processNext = async (): Promise<void> => {
-        if (currentIndex >= uniqueWords.length) return
-        
-        const index = currentIndex++
-        const word = uniqueWords[index]
-
-        setResults(prev => {
-          const next = [...prev]
-          next[index] = { ...next[index], status: "requesting" }
-          return next
-        })
-
-        try {
-          const res = await fetch("/api/ai/batch-lookup", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ words: [word], concurrency: 1 }),
-          })
-
-          if (!res.ok) {
-            const data = await res.json().catch(() => ({}))
-            throw new Error(data.error || "查询失败")
-          }
-
-          const data = await res.json()
-          if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-            const result = data.results[0]
-            setResults(prev => {
-              const next = [...prev]
-              next[index] = { ...result, index }
-              return next
-            })
-          } else {
-            throw new Error("返回数据格式错误")
-          }
-        } catch (err) {
-          setResults(prev => {
-            const next = [...prev]
-            next[index] = { 
-              ...next[index], 
-              status: "error", 
-              error: err instanceof Error ? err.message : "发生未知错误",
-            }
-            return next
-          })
-        }
-
-        await processNext()
-      }
-
-      const concurrency = Math.min(3, uniqueWords.length)
-      for (let i = 0; i < concurrency; i++) {
-        activePromises.push(processNext())
-      }
-
-      await Promise.all(activePromises)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "发生未知错误")
-    } finally {
-      setLoading(false)
-    }
+    await lookupQueuedWords(failedItems)
   }
 
   const successCount = results.filter(r => r.status === "success" || r.status === "cached").length
@@ -267,6 +291,22 @@ export default function BatchPage() {
                 <Badge className="bg-secondary text-secondary-foreground">
                   总计: {totalCount}
                 </Badge>
+                {errorCount > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={retryFailedLookups}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    重试失败项
+                  </Button>
+                )}
               </div>
             </div>
           </CardHeader>
