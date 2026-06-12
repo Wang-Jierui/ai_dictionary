@@ -12,6 +12,21 @@ function minInteger(value: unknown, min: number, fallback: number) {
   return Math.max(min, Math.floor(value))
 }
 
+function normalizeAiEndpoints(value: unknown) {
+  if (Array.isArray(value)) return value
+
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+
+  return []
+}
+
 export async function GET() {
   const settings = await prisma.settings.findFirst()
   if (!settings) {
@@ -20,7 +35,7 @@ export async function GET() {
         id: "default",
         interests: [],
         customPrompt: "",
-        aiEndpoints: JSON.stringify([]),
+        aiEndpoints: [],
       },
     })
     return NextResponse.json({ ...created, aiEndpoints: [] })
@@ -32,24 +47,28 @@ export async function GET() {
     if (userConfig) {
       return NextResponse.json({
         ...settings,
-        aiEndpoints: userConfig.aiEndpoints,
+        aiEndpoints: normalizeAiEndpoints(userConfig.aiEndpoints),
       })
     }
   }
 
-  return NextResponse.json(settings)
+  return NextResponse.json({
+    ...settings,
+    aiEndpoints: normalizeAiEndpoints(settings.aiEndpoints),
+  })
 }
 
 export async function PUT(request: Request) {
   const body = await request.json()
   const batchMaxWords = clampInteger(body.batchMaxWords, 1, 1000, 50)
   const batchConcurrency = minInteger(body.batchConcurrency, 1, 3)
+  const aiEndpoints = body.aiEndpoints === undefined ? undefined : normalizeAiEndpoints(body.aiEndpoints)
 
   const username = await getCurrentUsername()
-  if (username && body.aiEndpoints !== undefined) {
+  if (username && aiEndpoints !== undefined) {
     await prisma.userApiConfig.update({
       where: { username },
-      data: { aiEndpoints: body.aiEndpoints },
+      data: { aiEndpoints },
     })
   }
 
@@ -60,7 +79,7 @@ export async function PUT(request: Request) {
       customPrompt: body.customPrompt,
       batchMaxWords,
       batchConcurrency,
-      ...(username ? {} : { aiEndpoints: body.aiEndpoints }),
+      ...(username || aiEndpoints === undefined ? {} : { aiEndpoints }),
     },
     create: {
       id: "default",
@@ -68,9 +87,21 @@ export async function PUT(request: Request) {
       customPrompt: body.customPrompt ?? "",
       batchMaxWords,
       batchConcurrency,
-      aiEndpoints: body.aiEndpoints ?? JSON.stringify([]),
+      aiEndpoints: aiEndpoints ?? [],
     },
   })
 
-  return NextResponse.json(settings)
+  const userConfig = username
+    ? await prisma.userApiConfig.findUnique({
+      where: { username },
+      select: { aiEndpoints: true },
+    })
+    : null
+
+  return NextResponse.json({
+    ...settings,
+    aiEndpoints: username
+      ? normalizeAiEndpoints(aiEndpoints ?? userConfig?.aiEndpoints)
+      : normalizeAiEndpoints(settings.aiEndpoints),
+  })
 }
