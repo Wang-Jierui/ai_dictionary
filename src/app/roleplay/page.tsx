@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, Suspense } from "react"
+import { useState, useRef, useEffect, Suspense, useCallback } from "react"
 import { useSearchParams } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Send, Loader2, Swords, RefreshCw } from "lucide-react"
+import { Send, Loader2, RefreshCw } from "lucide-react"
 
 interface Message {
   role: "user" | "assistant"
@@ -49,18 +49,55 @@ function RoleplayContent() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const autoStarted = useRef(false)
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
-
-  useEffect(() => {
-    if (wordParam && !autoStarted.current) {
-      autoStarted.current = true
-      autoStartSession(wordParam)
+  const startSession = useCallback(async (scenarioDesc: string, word?: string) => {
+    const w = word ?? targetWord.trim()
+    if (!w) return
+    const kickoff: Message = {
+      role: "user",
+      content: `Let's start the roleplay. The scenario is: ${scenarioDesc}. I need to practice using the word "${w}". Please begin the conversation.`,
     }
-  }, [wordParam])
 
-  const autoStartSession = async (word: string) => {
+    setScenario(scenarioDesc)
+    setStarted(true)
+    setMessages([kickoff])
+    setLoading(true)
+
+    try {
+      const res = await fetch("/api/ai/roleplay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetWord: w,
+          scenario: scenarioDesc,
+          messages: [kickoff],
+        }),
+      })
+
+      if (!res.ok) { setLoading(false); return }
+
+      const createdSessionId = res.headers.get("X-Session-Id")
+      if (createdSessionId) setSessionId(createdSessionId)
+
+      const reader = res.body?.getReader()
+      if (!reader) { setLoading(false); return }
+
+      const decoder = new TextDecoder()
+      let text = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        text += decoder.decode(value, { stream: true })
+        setMessages([kickoff, { role: "assistant", content: text }])
+      }
+
+      setMessages([kickoff, { role: "assistant", content: text }])
+    } finally {
+      setLoading(false)
+    }
+  }, [targetWord])
+
+  const autoStartSession = useCallback(async (word: string) => {
     if (!word.trim()) return
     setTargetWord(word.trim())
     setLoadingScenario(true)
@@ -89,47 +126,18 @@ function RoleplayContent() {
     } catch {
       setLoadingScenario(false)
     }
-  }
+  }, [startSession])
 
-  const startSession = async (scenarioDesc: string, word?: string) => {
-    const w = word ?? targetWord.trim()
-    if (!w) return
-    setScenario(scenarioDesc)
-    setStarted(true)
-    setMessages([])
-    setLoading(true)
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
 
-    try {
-      const res = await fetch("/api/ai/roleplay", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetWord: w,
-          scenario: scenarioDesc,
-          messages: [{ role: "user", content: `Let's start the roleplay. The scenario is: ${scenarioDesc}. I need to practice using the word "${w}". Please begin the conversation.` }],
-        }),
-      })
-
-      if (!res.ok) { setLoading(false); return }
-
-      const reader = res.body?.getReader()
-      if (!reader) { setLoading(false); return }
-
-      const decoder = new TextDecoder()
-      let text = ""
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        text += decoder.decode(value, { stream: true })
-        setMessages([{ role: "assistant", content: text }])
-      }
-
-      setMessages([{ role: "assistant", content: text }])
-    } finally {
-      setLoading(false)
+  useEffect(() => {
+    if (wordParam && !autoStarted.current) {
+      autoStarted.current = true
+      void autoStartSession(wordParam)
     }
-  }
+  }, [wordParam, autoStartSession])
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return
@@ -152,6 +160,9 @@ function RoleplayContent() {
       })
 
       if (!res.ok) { setLoading(false); return }
+
+      const currentSessionId = res.headers.get("X-Session-Id")
+      if (currentSessionId) setSessionId(currentSessionId)
 
       const reader = res.body?.getReader()
       if (!reader) { setLoading(false); return }
