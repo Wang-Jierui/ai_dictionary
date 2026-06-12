@@ -44,3 +44,4 @@ next-env.d.ts
 
 # local agent runtime state
 /.omo/run-continuation/
+/.playwright-mcp/

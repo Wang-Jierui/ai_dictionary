@@ -11,6 +11,7 @@ import type { DictionaryEntry, AIWordData } from "@/types/dictionary"
 import { WordChatPanel } from "@/components/word-chat-panel"
 
 const HISTORY_KEY = "ai-dict-search-history"
+const REVIEW_QUEUE_KEY = "ai-dict-review-queue"
 const MAX_HISTORY = 8
 
 function getHistory(): string[] {
@@ -50,6 +51,184 @@ interface WordResult {
   fromCache: boolean
 }
 
+function textValue(value: unknown) {
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return ""
+}
+
+function stringList(value: unknown) {
+  if (typeof value === "string") {
+    const text = value.trim()
+    return text ? [text] : []
+  }
+
+  if (!Array.isArray(value)) return []
+
+  return value.map(item => textValue(item).trim()).filter(Boolean)
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function senseMap(value: unknown) {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map(objectRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map(item => ({
+      meaning: textValue(item.meaning).trim(),
+      usage: textValue(item.usage).trim(),
+    }))
+    .filter(item => item.meaning || item.usage)
+}
+
+function synonymBoundaries(value: unknown) {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map(objectRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map(item => ({
+      synonym: textValue(item.synonym).trim(),
+      difference: textValue(item.difference).trim(),
+    }))
+    .filter(item => item.synonym || item.difference)
+}
+
+function activeRecall(value: unknown) {
+  const record = objectRecord(value)
+  if (!record) return null
+
+  const question = textValue(record.question).trim()
+  const answer = textValue(record.answer).trim()
+  if (!question && !answer) return null
+
+  return { question, answer }
+}
+
+function hasMeaningfulAiContent(data: AIWordData) {
+  return Boolean(
+    data.chineseDefinition.trim() ||
+    data.personalizedExamples.length > 0 ||
+    data.nuanceAnalysis.trim() ||
+    data.etymologyStory.trim() ||
+    data.mnemonicHook.trim() ||
+    data.coreImage?.trim() ||
+    data.senseMap?.some(item => item.meaning.trim() || item.usage.trim()) ||
+    data.collocations?.length ||
+    data.synonymBoundaries?.some(item => item.synonym.trim() || item.difference.trim()) ||
+    data.commonMistakes?.length ||
+    data.multiHookMemory?.length ||
+    data.activeRecall?.question.trim() ||
+    data.activeRecall?.answer.trim() ||
+    data.practiceTask?.trim(),
+  )
+}
+
+function coerceAiWordData(value: unknown): AIWordData | null {
+  const record = objectRecord(value)
+  if (!record) return null
+
+  const data: AIWordData = {
+    chineseDefinition: textValue(record.chineseDefinition).trim(),
+    personalizedExamples: stringList(record.personalizedExamples),
+    nuanceAnalysis: textValue(record.nuanceAnalysis).trim(),
+    etymologyStory: textValue(record.etymologyStory).trim(),
+    mnemonicHook: textValue(record.mnemonicHook).trim(),
+  }
+
+  const coreImage = textValue(record.coreImage).trim()
+  const senses = senseMap(record.senseMap)
+  const collocations = stringList(record.collocations)
+  const boundaries = synonymBoundaries(record.synonymBoundaries)
+  const mistakes = stringList(record.commonMistakes)
+  const hooks = stringList(record.multiHookMemory)
+  const recall = activeRecall(record.activeRecall)
+  const practiceTask = textValue(record.practiceTask).trim()
+
+  if (coreImage) data.coreImage = coreImage
+  if (senses.length > 0) data.senseMap = senses
+  if (collocations.length > 0) data.collocations = collocations
+  if (boundaries.length > 0) data.synonymBoundaries = boundaries
+  if (mistakes.length > 0) data.commonMistakes = mistakes
+  if (hooks.length > 0) data.multiHookMemory = hooks
+  if (recall) data.activeRecall = recall
+  if (practiceTask) data.practiceTask = practiceTask
+
+  if (!hasMeaningfulAiContent(data)) return null
+
+  return data
+}
+
+function firstBalancedJsonObject(text: string) {
+  const startIndex = text.indexOf("{")
+  if (startIndex < 0) return null
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index]
+
+    if (escaped) {
+      escaped = false
+      continue
+    }
+
+    if (char === "\\") {
+      escaped = inString
+      continue
+    }
+
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+
+    if (inString) continue
+
+    if (char === "{") depth += 1
+    if (char === "}") depth -= 1
+    if (depth === 0) return text.slice(startIndex, index + 1)
+  }
+
+  return null
+}
+
+function parseAiResponseText(text: string): AIWordData {
+  const candidates = [
+    text.trim(),
+    ...Array.from(text.matchAll(/```json\s*([\s\S]*?)```/gi), match => match[1].trim()),
+    ...Array.from(text.matchAll(/```\s*([\s\S]*?)```/g), match => match[1].trim()),
+  ]
+  const balanced = firstBalancedJsonObject(text)
+  if (balanced) candidates.push(balanced)
+
+  for (const candidate of candidates) {
+    if (!candidate) continue
+
+    try {
+      const parsed = coerceAiWordData(JSON.parse(candidate) as unknown)
+      if (parsed) return parsed
+    } catch {
+      continue
+    }
+  }
+
+  return {
+    chineseDefinition: text.trim(),
+    personalizedExamples: [],
+    nuanceAnalysis: "",
+    etymologyStory: "",
+    mnemonicHook: "",
+  }
+}
+
 function HomeContent() {
   const searchParams = useSearchParams()
   const wordParam = searchParams.get("word")
@@ -57,6 +236,7 @@ function HomeContent() {
   const [results, setResults] = useState<Map<string, WordResult>>(new Map<string, WordResult>())
   const [activeWord, setActiveWord] = useState<string>("")
   const [history, setHistory] = useState<string[]>([])
+  const [reviewQueue, setReviewQueue] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const initialized = useRef(false)
   
@@ -72,6 +252,9 @@ function HomeContent() {
   const imageMode = activeResult?.imageMode ?? "mood"
   const fromCache = activeResult?.fromCache ?? false
 
+  const currentIndex = reviewQueue.indexOf(activeWord)
+  const isInQueue = currentIndex !== -1
+
   const updateResult = useCallback((word: string, patch: Partial<WordResult>) => {
     setResults(prev => {
       const existing = prev.get(word)
@@ -85,11 +268,27 @@ function HomeContent() {
   }, [])
 
   useEffect(() => {
-    if (wordParam && !initialized.current) {
-      initialized.current = true
-      searchWord(wordParam)
+    try {
+      const raw = sessionStorage.getItem(REVIEW_QUEUE_KEY)
+      if (!raw) return
+      const queue = JSON.parse(raw)
+      if (Array.isArray(queue)) {
+        const validQueue = Array.from(new Set(
+          queue
+            .filter(item => typeof item === "string")
+            .map(item => item.trim())
+            .filter(item => item.length > 0)
+        ))
+        setReviewQueue(validQueue)
+      } else {
+        sessionStorage.removeItem(REVIEW_QUEUE_KEY)
+        setReviewQueue([])
+      }
+    } catch {
+      sessionStorage.removeItem(REVIEW_QUEUE_KEY)
+      setReviewQueue([])
     }
-  }, [wordParam])
+  }, [activeWord])
 
   const autoSave = useCallback(async (word: string, dict: DictionaryEntry | null, ai: AIWordData) => {
     const briefDef = dict?.meanings[0]?.definitions[0]?.definition ?? ""
@@ -164,9 +363,9 @@ function HomeContent() {
       }
 
       try {
-        fetchedAi = JSON.parse(accumulated) as AIWordData
+        fetchedAi = parseAiResponseText(accumulated)
       } catch {
-        fetchedAi = { chineseDefinition: "", personalizedExamples: [], nuanceAnalysis: accumulated, etymologyStory: "", mnemonicHook: "" }
+        fetchedAi = { chineseDefinition: accumulated.trim(), personalizedExamples: [], nuanceAnalysis: "", etymologyStory: "", mnemonicHook: "" }
       }
       updateResult(trimmed, { aiData: fetchedAi, loadingAI: false })
     }).catch(() => updateResult(trimmed, { loadingAI: false }))
@@ -190,6 +389,13 @@ function HomeContent() {
       autoSave(trimmed, fetchedDict, fetchedAi)
     }
   }, [autoSave, updateResult])
+
+  useEffect(() => {
+    if (wordParam && !initialized.current) {
+      initialized.current = true
+      searchWord(wordParam)
+    }
+  }, [wordParam, searchWord])
 
   const regenerateMnemonic = async () => {
     if (!activeWord || loadingMnemonic) return
@@ -346,6 +552,73 @@ function HomeContent() {
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-center text-destructive">
             {error}
+          </CardContent>
+        </Card>
+      )}
+
+      {isInQueue && (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="py-3 px-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <Badge className="bg-background text-foreground border hover:bg-background">
+                复习 {currentIndex + 1} / {reviewQueue.length}
+              </Badge>
+              <span className="text-sm text-muted-foreground font-medium">
+                {activeWord}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="h-8"
+                disabled={currentIndex === 0}
+                onClick={() => {
+                  const prev = reviewQueue[currentIndex - 1]
+                  if (prev) {
+                    searchWord(prev)
+                    window.history.pushState({}, "", `/?word=${encodeURIComponent(prev)}`)
+                  }
+                }}
+              >
+                上一个
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="h-8"
+                disabled={currentIndex === reviewQueue.length - 1}
+                onClick={() => {
+                  const next = reviewQueue[currentIndex + 1]
+                  if (next) {
+                    searchWord(next)
+                    window.history.pushState({}, "", `/?word=${encodeURIComponent(next)}`)
+                  }
+                }}
+              >
+                下一个
+              </Button>
+              <div className="w-px h-4 bg-border mx-1" />
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-8 text-muted-foreground"
+                onClick={() => window.location.href = "/vocabulary"}
+              >
+                返回生词本
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-8 text-muted-foreground hover:text-destructive"
+                onClick={() => {
+                  sessionStorage.removeItem(REVIEW_QUEUE_KEY)
+                  setReviewQueue([])
+                }}
+              >
+                退出复习
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}

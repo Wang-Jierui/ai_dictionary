@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Trash2, Loader2, BookOpen, Sparkles, ExternalLink, Search } from "lucide-react"
@@ -17,6 +17,8 @@ interface VocabEntry {
   notes: string | null
   createdAt: string
 }
+
+const REVIEW_QUEUE_KEY = "ai-dict-review-queue"
 
 export default function VocabularyPage() {
   const [words, setWords] = useState<VocabEntry[]>([])
@@ -80,12 +82,27 @@ export default function VocabularyPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">生词本</h1>
-        {selectedIds.size >= 2 && (
-          <Button onClick={goToStory}>
-            <Sparkles className="h-4 w-4" />
-            用 {selectedIds.size} 个词生成故事
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {filteredWords.length > 0 && (
+            <Button 
+              variant="outline"
+              onClick={() => {
+                const queue = filteredWords.map(w => w.word)
+                sessionStorage.setItem(REVIEW_QUEUE_KEY, JSON.stringify(queue))
+                window.location.href = `/?word=${encodeURIComponent(queue[0])}`
+              }}
+            >
+              <BookOpen className="h-4 w-4 mr-2" />
+              开始复习
+            </Button>
+          )}
+          {selectedIds.size >= 2 && (
+            <Button onClick={goToStory}>
+              <Sparkles className="h-4 w-4 mr-2" />
+              用 {selectedIds.size} 个词生成故事
+            </Button>
+          )}
+        </div>
       </div>
 
       {words.length > 0 && (
@@ -144,8 +161,15 @@ export default function VocabularyPage() {
                   <Badge className="text-xs">
                     {new Date(entry.createdAt).toLocaleDateString("zh-CN")}
                   </Badge>
-                  <Link href={`/?word=${encodeURIComponent(entry.word)}`}>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <Link 
+                    href={`/?word=${encodeURIComponent(entry.word)}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const queue = filteredWords.map(w => w.word)
+                      sessionStorage.setItem(REVIEW_QUEUE_KEY, JSON.stringify(queue))
+                    }}
+                  >
+                    <Button variant="ghost" size="icon" className="h-8 w-8" tabIndex={-1}>
                       <ExternalLink className="h-4 w-4 text-blue-500" />
                     </Button>
                   </Link>

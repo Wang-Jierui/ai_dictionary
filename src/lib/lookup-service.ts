@@ -1,4 +1,4 @@
-import { generateText, Output, streamText } from "ai"
+import { generateText, streamText } from "ai"
 import { z } from "zod/v4"
 import { buildLookupPrompt, getModelForTask } from "@/lib/ai"
 import { lookupWord } from "@/lib/dictionary-api"
@@ -69,6 +69,196 @@ export function clampLookupConcurrency(value: unknown, defaultConcurrency = 3) {
   return Math.min(5, Math.max(1, Math.floor(value)))
 }
 
+function toStringValue(value: unknown) {
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return ""
+}
+
+function toStringArray(value: unknown) {
+  if (typeof value === "string") {
+    const text = value.trim()
+    return text ? [text] : []
+  }
+
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map(item => toStringValue(item).trim())
+    .filter(Boolean)
+}
+
+function toSenseMap(value: unknown) {
+  if (!Array.isArray(value)) return []
+
+  const entries = value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map(item => ({
+      meaning: toStringValue(item.meaning).trim(),
+      usage: toStringValue(item.usage).trim(),
+    }))
+    .filter(item => item.meaning || item.usage)
+
+  return entries
+}
+
+function toSynonymBoundaries(value: unknown) {
+  if (!Array.isArray(value)) return []
+
+  const entries = value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map(item => ({
+      synonym: toStringValue(item.synonym).trim(),
+      difference: toStringValue(item.difference).trim(),
+    }))
+    .filter(item => item.synonym || item.difference)
+
+  return entries
+}
+
+function toActiveRecall(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+
+  const question = toStringValue((value as Record<string, unknown>).question).trim()
+  const answer = toStringValue((value as Record<string, unknown>).answer).trim()
+
+  if (!question && !answer) return null
+
+  return { question, answer }
+}
+
+function hasMeaningfulLookupContent(data: AIWordData) {
+  return Boolean(
+    data.chineseDefinition.trim() ||
+    data.personalizedExamples.length > 0 ||
+    data.nuanceAnalysis.trim() ||
+    data.etymologyStory.trim() ||
+    data.mnemonicHook.trim() ||
+    data.coreImage?.trim() ||
+    data.senseMap?.some(item => item.meaning.trim() || item.usage.trim()) ||
+    data.collocations?.length ||
+    data.synonymBoundaries?.some(item => item.synonym.trim() || item.difference.trim()) ||
+    data.commonMistakes?.length ||
+    data.multiHookMemory?.length ||
+    data.activeRecall?.question.trim() ||
+    data.activeRecall?.answer.trim() ||
+    data.practiceTask?.trim(),
+  )
+}
+
+function coerceLookupAiWordData(value: unknown): AIWordData | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+
+  const record = value as Record<string, unknown>
+  const normalized: AIWordData = {
+    chineseDefinition: toStringValue(record.chineseDefinition).trim(),
+    personalizedExamples: toStringArray(record.personalizedExamples),
+    nuanceAnalysis: toStringValue(record.nuanceAnalysis).trim(),
+    etymologyStory: toStringValue(record.etymologyStory).trim(),
+    mnemonicHook: toStringValue(record.mnemonicHook).trim(),
+  }
+
+  const coreImage = toStringValue(record.coreImage).trim()
+  const senseMap = toSenseMap(record.senseMap)
+  const collocations = toStringArray(record.collocations)
+  const synonymBoundaries = toSynonymBoundaries(record.synonymBoundaries)
+  const commonMistakes = toStringArray(record.commonMistakes)
+  const multiHookMemory = toStringArray(record.multiHookMemory)
+  const activeRecall = toActiveRecall(record.activeRecall)
+  const practiceTask = toStringValue(record.practiceTask).trim()
+
+  if (coreImage) normalized.coreImage = coreImage
+  if (senseMap.length > 0) normalized.senseMap = senseMap
+  if (collocations.length > 0) normalized.collocations = collocations
+  if (synonymBoundaries.length > 0) normalized.synonymBoundaries = synonymBoundaries
+  if (commonMistakes.length > 0) normalized.commonMistakes = commonMistakes
+  if (multiHookMemory.length > 0) normalized.multiHookMemory = multiHookMemory
+  if (activeRecall) normalized.activeRecall = activeRecall
+  if (practiceTask) normalized.practiceTask = practiceTask
+
+  if (!hasMeaningfulLookupContent(normalized)) return null
+
+  const parsed = aiWordSchema.safeParse(normalized)
+  return parsed.success ? parsed.data : null
+}
+
+function extractFirstBalancedJsonObject(text: string) {
+  const startIndex = text.indexOf("{")
+  if (startIndex < 0) return null
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index]
+
+    if (escaped) {
+      escaped = false
+      continue
+    }
+
+    if (char === "\\") {
+      escaped = inString
+      continue
+    }
+
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+
+    if (inString) continue
+
+    if (char === "{") depth += 1
+    if (char === "}") depth -= 1
+
+    if (depth === 0) {
+      return text.slice(startIndex, index + 1)
+    }
+  }
+
+  return null
+}
+
+function tryParseLookupJson(text: string) {
+  const candidates = [
+    text.trim(),
+    ...Array.from(text.matchAll(/```json\s*([\s\S]*?)```/gi), match => match[1].trim()),
+    ...Array.from(text.matchAll(/```\s*([\s\S]*?)```/g), match => match[1].trim()),
+  ]
+
+  const balanced = extractFirstBalancedJsonObject(text)
+  if (balanced) candidates.push(balanced)
+
+  for (const candidate of candidates) {
+    if (!candidate) continue
+
+    try {
+      const parsed = JSON.parse(candidate) as unknown
+      const aiData = coerceLookupAiWordData(parsed)
+      if (aiData) return aiData
+    } catch {
+      continue
+    }
+  }
+
+  return null
+}
+
+function parseLookupResponse(text: string): AIWordData {
+  const parsed = tryParseLookupJson(text)
+  if (parsed) return parsed
+
+  return {
+    chineseDefinition: text.trim() || text,
+    personalizedExamples: [],
+    nuanceAnalysis: "",
+    etymologyStory: "",
+    mnemonicHook: "",
+  }
+}
+
 export async function findCachedLookup(word: string): Promise<CachedLookup | null> {
   const cached = await prisma.vocabulary.findUnique({ where: { word } })
 
@@ -106,7 +296,6 @@ export async function getLookupSettings(): Promise<LookupSettings> {
 export function streamAiLookup(word: string, settings: LookupSettings) {
   return getModelForTask("lookup").then(model => streamText({
     model,
-    output: Output.object({ schema: aiWordSchema }),
     prompt: buildLookupPrompt(word, settings.interests, settings.customPrompt),
   }))
 }
@@ -117,13 +306,12 @@ export async function fetchDictionaryEntry(word: string) {
 
 export async function generateAiLookup(word: string, settings: LookupSettings): Promise<AIWordData> {
   const model = await getModelForTask("lookup")
-  const { output } = await generateText({
+  const { text } = await generateText({
     model,
-    output: Output.object({ schema: aiWordSchema }),
     prompt: buildLookupPrompt(word, settings.interests, settings.customPrompt),
   })
 
-  return output
+  return parseLookupResponse(text)
 }
 
 function firstBriefDefinition(dictData: DictionaryEntry | null) {

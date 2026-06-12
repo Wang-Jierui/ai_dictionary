@@ -8,10 +8,12 @@ import { Textarea } from "@/components/ui/textarea"
 import { Loader2, Upload, Play, CheckCircle2, XCircle, FileText, ListPlus, AlertTriangle } from "lucide-react"
 import type { DictionaryEntry, AIWordData } from "@/types/dictionary"
 
+const MAX_UNIQUE_LOOKUP_WORDS = 50
+
 interface BatchLookupResult {
   index: number
   word: string
-  status: "cached" | "success" | "error"
+  status: "pending" | "requesting" | "cached" | "success" | "error"
   cached: boolean
   dictData: DictionaryEntry | null
   aiData: AIWordData | null
@@ -63,28 +65,82 @@ export default function BatchPage() {
       return
     }
 
+    if (uniqueWords.length > MAX_UNIQUE_LOOKUP_WORDS) {
+      setError(`一次最多查询 ${MAX_UNIQUE_LOOKUP_WORDS} 个不重复单词，请拆分后再试`)
+      return
+    }
+
+    const initialResults: BatchLookupResult[] = uniqueWords.map((word, index) => ({
+      index,
+      word,
+      status: "pending",
+      cached: false,
+      dictData: null,
+      aiData: null,
+    }))
+    setResults(initialResults)
     setLoading(true)
 
     try {
-      const res = await fetch("/api/ai/batch-lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ words: uniqueWords, concurrency: 3 }),
-      })
+      let currentIndex = 0
+      const activePromises: Promise<void>[] = []
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || "批量查询失败")
+      const processNext = async (): Promise<void> => {
+        if (currentIndex >= uniqueWords.length) return
+        
+        const index = currentIndex++
+        const word = uniqueWords[index]
+
+        setResults(prev => {
+          const next = [...prev]
+          next[index] = { ...next[index], status: "requesting" }
+          return next
+        })
+
+        try {
+          const res = await fetch("/api/ai/batch-lookup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ words: [word], concurrency: 1 }),
+          })
+
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            throw new Error(data.error || "查询失败")
+          }
+
+          const data = await res.json()
+          if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+            const result = data.results[0]
+            setResults(prev => {
+              const next = [...prev]
+              next[index] = { ...result, index }
+              return next
+            })
+          } else {
+            throw new Error("返回数据格式错误")
+          }
+        } catch (err) {
+          setResults(prev => {
+            const next = [...prev]
+            next[index] = { 
+              ...next[index], 
+              status: "error", 
+              error: err instanceof Error ? err.message : "发生未知错误",
+            }
+            return next
+          })
+        }
+
+        await processNext()
       }
 
-      const data = await res.json()
-      if (data.results && Array.isArray(data.results)) {
-        // Sort by index to maintain original order
-        const sortedResults = [...data.results].sort((a, b) => a.index - b.index)
-        setResults(sortedResults)
-      } else {
-        throw new Error("返回数据格式错误")
+      const concurrency = Math.min(3, uniqueWords.length)
+      for (let i = 0; i < concurrency; i++) {
+        activePromises.push(processNext())
       }
+
+      await Promise.all(activePromises)
     } catch (err) {
       setError(err instanceof Error ? err.message : "发生未知错误")
     } finally {
@@ -95,6 +151,11 @@ export default function BatchPage() {
   const successCount = results.filter(r => r.status === "success" || r.status === "cached").length
   const errorCount = results.filter(r => r.status === "error").length
   const cachedCount = results.filter(r => r.status === "cached").length
+  const pendingCount = results.filter(r => r.status === "pending").length
+  const requestingCount = results.filter(r => r.status === "requesting").length
+  const completedCount = successCount + errorCount
+  const totalCount = results.length
+  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
 
   return (
     <div className="space-y-6">
@@ -175,6 +236,21 @@ export default function BatchPage() {
                 查询结果
               </CardTitle>
               <div className="flex flex-wrap items-center gap-2 text-sm">
+                {loading && (
+                  <Badge className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100">
+                    进度: {completedCount}/{totalCount} ({progressPercent}%)
+                  </Badge>
+                )}
+                {requestingCount > 0 && (
+                  <Badge className="bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100">
+                    请求中: {requestingCount}
+                  </Badge>
+                )}
+                {pendingCount > 0 && (
+                  <Badge className="bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100">
+                    等待中: {pendingCount}
+                  </Badge>
+                )}
                 <Badge className="bg-green-50 text-green-700 border-green-200 hover:bg-green-100">
                   成功: {successCount}
                 </Badge>
@@ -189,7 +265,7 @@ export default function BatchPage() {
                   </Badge>
                 )}
                 <Badge className="bg-secondary text-secondary-foreground">
-                  总计: {results.length}
+                  总计: {totalCount}
                 </Badge>
               </div>
             </div>
@@ -200,12 +276,19 @@ export default function BatchPage() {
                 <div 
                   key={`${result.index}-${result.word}`}
                   className={`p-3 rounded-md border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                    result.status === "error" ? "bg-red-50/30 border-red-100" : "bg-muted/30"
+                    result.status === "error" ? "bg-red-50/30 border-red-100" : 
+                    result.status === "requesting" ? "bg-amber-50/30 border-amber-100" :
+                    result.status === "pending" ? "bg-slate-50/30 border-slate-100 opacity-70" :
+                    "bg-muted/30"
                   }`}
                 >
                   <div className="flex items-start sm:items-center gap-3 min-w-0">
                     {result.status === "error" ? (
                       <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5 sm:mt-0" />
+                    ) : result.status === "requesting" ? (
+                      <Loader2 className="h-5 w-5 text-amber-500 shrink-0 mt-0.5 sm:mt-0 animate-spin" />
+                    ) : result.status === "pending" ? (
+                      <div className="h-5 w-5 rounded-full border-2 border-slate-300 shrink-0 mt-0.5 sm:mt-0" />
                     ) : (
                       <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0 mt-0.5 sm:mt-0" />
                     )}
@@ -222,9 +305,23 @@ export default function BatchPage() {
                             已缓存
                           </Badge>
                         )}
+                        {result.status === "requesting" && (
+                          <Badge className="text-[10px] h-5 px-1.5 bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100">
+                            请求中
+                          </Badge>
+                        )}
+                        {result.status === "pending" && (
+                          <Badge className="text-[10px] h-5 px-1.5 bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100">
+                            等待中
+                          </Badge>
+                        )}
                       </div>
                       {result.status === "error" ? (
                         <p className="text-sm text-red-600 mt-1">{result.error}</p>
+                      ) : result.status === "requesting" ? (
+                        <p className="text-sm text-amber-600 mt-1">正在查询...</p>
+                      ) : result.status === "pending" ? (
+                        <p className="text-sm text-slate-500 mt-1">等待查询</p>
                       ) : (
                         <p className="text-sm text-muted-foreground mt-1 line-clamp-1">
                           {result.aiData?.chineseDefinition || 
@@ -235,7 +332,7 @@ export default function BatchPage() {
                     </div>
                   </div>
                   
-                  {result.status !== "error" && (
+                  {(result.status === "success" || result.status === "cached") && (
                     <Button 
                       variant="ghost" 
                       size="sm" 
