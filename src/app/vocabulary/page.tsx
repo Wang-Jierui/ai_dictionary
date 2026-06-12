@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Trash2, Loader2, BookOpen, Sparkles, Search, Brain, Lightbulb, HelpCircle, PenTool, ImageIcon, RefreshCw, Swords, Volume2, ChevronLeft, ChevronRight, X, Edit3, Save } from "lucide-react"
+import { Trash2, Loader2, BookOpen, Sparkles, Search, Brain, Lightbulb, HelpCircle, PenTool, ImageIcon, RefreshCw, Swords, Volume2, ChevronLeft, ChevronRight, X, Edit3, Save, Languages, Eye, Map as MapIcon, Link2, Split, AlertTriangle, History as HistoryIcon } from "lucide-react"
 import type { VocabularyEntry } from "@/types/dictionary"
 import { WordChatPanel } from "@/components/word-chat-panel"
 
@@ -305,6 +305,14 @@ export default function VocabularyPage() {
                 去实战
               </Button>
             </div>
+            {aiData?.chineseDefinition && (
+              <div className="mt-2 text-base font-medium flex items-start gap-1.5">
+                <Languages className="h-4 w-4 text-blue-500 mt-1 shrink-0" />
+                <div className="whitespace-pre-wrap leading-relaxed">
+                  {aiData.chineseDefinition}
+                </div>
+              </div>
+            )}
             <div className="space-y-2">
               {dictData.meanings.map((meaning, i) => (
                 <div key={i}>
@@ -325,6 +333,151 @@ export default function VocabularyPage() {
 
         {aiData && (
           <div className="space-y-4">
+            {aiData.coreImage && (
+              <Card className="bg-primary/5 border-primary/20">
+                <CardContent className="pt-6 flex items-start gap-3">
+                  <Eye className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                  <div>
+                    <h4 className="font-semibold text-primary mb-1">核心意象</h4>
+                    <p className="text-sm leading-relaxed">{aiData.coreImage}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiData.senseMap && aiData.senseMap.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <MapIcon className="h-4 w-4 text-indigo-500" />
+                    词义图谱
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {aiData.senseMap.map((sense, i) => (
+                      <div key={i} className="bg-muted/50 p-3 rounded-md border">
+                        <div className="font-medium text-sm mb-1">{sense.meaning}</div>
+                        <div className="text-xs text-muted-foreground">{sense.usage}</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiData.collocations && aiData.collocations.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Link2 className="h-4 w-4 text-orange-500" />
+                    地道搭配
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-wrap gap-2">
+                    {aiData.collocations.map((col, i) => (
+                      <Badge key={i} className="px-3 py-1.5 text-sm font-normal">
+                        {col}
+                      </Badge>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiData.synonymBoundaries && aiData.synonymBoundaries.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Split className="h-4 w-4 text-teal-500" />
+                    近义词边界
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {aiData.synonymBoundaries.map((syn, i) => (
+                      <div key={i} className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+                        <Badge className="w-fit shrink-0 bg-teal-50/50 text-teal-700 border-teal-200">
+                          vs {syn.synonym}
+                        </Badge>
+                        <p className="text-sm leading-relaxed text-muted-foreground">{syn.difference}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiData.commonMistakes && aiData.commonMistakes.length > 0 && (
+              <Card className="border-red-200 bg-red-50/30">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base text-red-700">
+                    <AlertTriangle className="h-4 w-4" />
+                    常见误区
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2">
+                    {aiData.commonMistakes.map((mistake, i) => (
+                      <li key={i} className="text-sm leading-relaxed text-red-800/90 flex items-start gap-2">
+                        <span className="text-red-500 mt-0.5">•</span>
+                        {mistake}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiData.personalizedExamples && aiData.personalizedExamples.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Sparkles className="h-4 w-4 text-amber-500" />
+                    兴趣定制例句
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2">
+                    {aiData.personalizedExamples.map((ex, i) => (
+                      <li key={i} className="text-sm leading-relaxed pl-4 border-l-2 border-amber-200">
+                        {ex}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiData.nuanceAnalysis && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <BookOpen className="h-4 w-4 text-blue-500" />
+                    母语级语感辨析
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{aiData.nuanceAnalysis}</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiData.etymologyStory && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <HistoryIcon className="h-4 w-4 text-emerald-500" />
+                    词源微故事
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{aiData.etymologyStory}</p>
+                </CardContent>
+              </Card>
+            )}
+
             {aiData.mnemonicHook && (
               <Card>
                 <CardHeader className="pb-2">
