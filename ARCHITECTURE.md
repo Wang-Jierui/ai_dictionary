@@ -80,9 +80,8 @@ sequenceDiagram
 
 | 模块名称 | 路径/入口 | 功能描述 | 核心技术点 |
 | :--- | :--- | :--- | :--- |
-| **智能查词** | `/` (主页) | 基础词意 + AI 多义词详解、兴趣定制例句、语感辨析、词源故事、谐音梗记忆法。 | `Vercel AI SDK` 流式输出，`zod` 强制结构化 JSON 解析，Promise 并发请求。 |
-| **生图辅助** | `/` (主页) | (可选功能) 为当前单词生成一张意境图或幽默的 Meme 梗图。 | 调用 `ai` 包的 `generateImage`，直接返回 Base64 渲染。 |
-| **生词本** | `/vocabulary` | 查过的词自动存入，列表展示（支持搜索、过滤），点击可秒开缓存解释。 | 数据库全文/部分匹配过滤，缓存机制。 |
+| **智能查词** | `/` (主页) | 即时查询入口，展示基础词意、AI 多义词详解、兴趣定制例句、语感辨析和词源故事，并自动写入缓存。 | `Vercel AI SDK` 流式输出，共用 `ai-parser` 做结构化 JSON 解析，Promise 并发请求。 |
+| **生词学习中心** | `/vocabulary` | 集中管理已缓存单词：搜索/过滤、详情展开、复习模式、笔记、脑洞记忆法再生成、AI 生图辅助和单词对话。 | 数据库部分匹配过滤，按需拉取完整缓存行，复用查词缓存与 AI 辅助接口。 |
 | **串词故事** | `/story` | 从生词本勾选 2-10 个单词，AI 自动编写一篇包含这些词的连贯小短文。 | 动态构建 Prompt，长文本流式生成。 |
 | **角色扮演** | `/roleplay` | AI 自动匹配最佳使用场景，与用户进行情景对话，若用户使用错误会给予纠正反馈。 | AI 身份设定 (System Prompt) + 历史上下文管理。 |
 | **场景表达** | `/scene` | 用户输入中文场景（如“在咖啡店点拿铁”），AI 提供地道英文表达、对话示例和文化禁忌。 | `zod` 定义多级嵌套 JSON 格式，强制 AI 按结构输出。 |
@@ -117,7 +116,7 @@ ai_dictionary/
 │   │   ├── scene/page.tsx      # 场景表达页面
 │   │   ├── settings/page.tsx   # 设置页面（兴趣标签、API 密钥）
 │   │   ├── story/page.tsx      # 串词故事页面
-│   │   ├── vocabulary/page.tsx # 生词本管理页面
+│   │   ├── vocabulary/page.tsx # 生词学习中心页面
 │   │   ├── layout.tsx          # 全局布局 (包含顶部导航栏栏和字体配置)
 │   │   └── page.tsx            # 主页 (核心查词结果渲染 UI)
 │   ├── components/
@@ -125,6 +124,8 @@ ai_dictionary/
 │   │   └── ui/                 # shadcn/ui 基础组件库 (Button, Card, Input 等)
 │   ├── lib/
 │   │   ├── ai.ts               # 核心逻辑：定义所有 AI Prompt 模板和 Provider 初始化
+│   │   ├── ai-parser.ts        # 查词 AI 响应解析与宽松结构化转换
+│   │   ├── lookup-service.ts   # 查词缓存、解析、保存的服务层封装
 │   │   ├── prisma.ts           # Prisma Client 全局单例实例化 (防热更新泄露)
 │   │   └── utils.ts            # Tailwind 类名合并工具
 │   └── types/
