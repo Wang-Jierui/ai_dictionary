@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 
 export async function POST(request: Request) {
-  const { word, phonetic, briefDefinition, chineseDefinition, dictData, aiData, imageData, imageMode } = await request.json()
+  const { word, phonetic, briefDefinition, chineseDefinition, notes, dictData, aiData, imageData, imageMode } = await request.json()
 
   if (!word) {
     return NextResponse.json({ error: "Missing word" }, { status: 400 })
@@ -11,9 +11,10 @@ export async function POST(request: Request) {
   const entry = await prisma.vocabulary.upsert({
     where: { word: word.toLowerCase() },
     update: {
-      phonetic,
-      briefDefinition: briefDefinition ?? "",
-      chineseDefinition,
+      ...(phonetic !== undefined && { phonetic }),
+      ...(briefDefinition !== undefined && { briefDefinition }),
+      ...(chineseDefinition !== undefined && { chineseDefinition }),
+      ...(notes !== undefined && { notes }),
       dictData: dictData ?? undefined,
       aiData: aiData ?? undefined,
       ...(imageData !== undefined && { imageData }),
@@ -24,6 +25,7 @@ export async function POST(request: Request) {
       phonetic,
       briefDefinition: briefDefinition ?? "",
       chineseDefinition,
+      notes,
       dictData: dictData ?? undefined,
       aiData: aiData ?? undefined,
       imageData: imageData ?? undefined,

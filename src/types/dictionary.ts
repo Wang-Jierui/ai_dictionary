@@ -88,6 +88,8 @@ export interface VocabularyEntry {
   notes?: string
   dictData?: DictionaryEntry | null
   aiData?: AIWordData | null
+  imageData?: string | null
+  imageMode?: "mood" | "meme" | null
   createdAt: Date
 }
 

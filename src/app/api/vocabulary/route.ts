@@ -1,7 +1,21 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const word = searchParams.get("word")?.trim().toLowerCase()
+  const id = searchParams.get("id")
+
+  if (word || id) {
+    const entry = await prisma.vocabulary.findFirst({
+      where: id ? { id } : { word },
+    })
+    if (!entry) {
+      return NextResponse.json({ error: "Vocabulary entry not found" }, { status: 404 })
+    }
+    return NextResponse.json(entry)
+  }
+
   const vocabulary = await prisma.vocabulary.findMany({
     orderBy: { createdAt: "desc" },
     select: {
