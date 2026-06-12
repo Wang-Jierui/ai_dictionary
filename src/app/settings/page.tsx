@@ -27,6 +27,11 @@ function clampInteger(value: number, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, Math.floor(value)))
 }
 
+function minInteger(value: number, min: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback
+  return Math.max(min, Math.floor(value))
+}
+
 export default function SettingsPage() {
   const [interests, setInterests] = useState<string[]>([])
   const [customInterest, setCustomInterest] = useState("")
@@ -59,8 +64,8 @@ export default function SettingsPage() {
       setCurrentUser(authData.username ?? null)
       setInterests(settingsData.interests ?? [])
       setCustomPrompt(settingsData.customPrompt ?? "")
-      setBatchMaxWords(clampInteger(Number(settingsData.batchMaxWords), 1, 100, 50))
-      setBatchConcurrency(clampInteger(Number(settingsData.batchConcurrency), 1, 5, 3))
+      setBatchMaxWords(clampInteger(Number(settingsData.batchMaxWords), 1, 1000, 50))
+      setBatchConcurrency(minInteger(Number(settingsData.batchConcurrency), 1, 3))
       const eps = typeof settingsData.aiEndpoints === "string"
         ? JSON.parse(settingsData.aiEndpoints || "[]")
         : settingsData.aiEndpoints ?? []
@@ -110,8 +115,8 @@ export default function SettingsPage() {
   }
 
   const save = async () => {
-    const safeBatchMaxWords = clampInteger(batchMaxWords, 1, 100, 50)
-    const safeBatchConcurrency = clampInteger(batchConcurrency, 1, 5, 3)
+    const safeBatchMaxWords = clampInteger(batchMaxWords, 1, 1000, 50)
+    const safeBatchConcurrency = minInteger(batchConcurrency, 1, 3)
     setBatchMaxWords(safeBatchMaxWords)
     setBatchConcurrency(safeBatchConcurrency)
 
@@ -313,24 +318,23 @@ export default function SettingsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">最大单词数</label>
-              <p className="text-xs text-muted-foreground">单次批量查询允许的最大单词数量 (1-100)</p>
+              <p className="text-xs text-muted-foreground">单次批量查询允许的最大单词数量 (1-1000)</p>
               <Input
                 type="number"
                 min={1}
-                max={100}
+                max={1000}
                 value={batchMaxWords}
-                onChange={e => setBatchMaxWords(clampInteger(e.currentTarget.valueAsNumber, 1, 100, 50))}
+                onChange={e => setBatchMaxWords(clampInteger(e.currentTarget.valueAsNumber, 1, 1000, 50))}
               />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">并发请求数</label>
-              <p className="text-xs text-muted-foreground">同时处理的单词数量 (1-5)</p>
+              <p className="text-xs text-muted-foreground">同时处理的单词数量。数值越高越容易触发 API 限流，请按模型服务能力调整。</p>
               <Input
                 type="number"
                 min={1}
-                max={5}
                 value={batchConcurrency}
-                onChange={e => setBatchConcurrency(clampInteger(e.currentTarget.valueAsNumber, 1, 5, 3))}
+                onChange={e => setBatchConcurrency(minInteger(e.currentTarget.valueAsNumber, 1, 3))}
               />
             </div>
           </div>
@@ -360,17 +364,17 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground">
                 登录后 API 配置将绑定到你的账号，其他用户不可见。未登录时使用共享配置。
               </p>
-              <div className="flex gap-2 items-end">
-                <div className="space-y-1">
+              <div className="flex flex-wrap gap-2 items-end">
+                <div className="space-y-1 flex-1 min-w-[140px]">
                   <label className="text-xs text-muted-foreground">用户名</label>
                   <Input
                     value={authUsername}
                     onChange={e => setAuthUsername(e.target.value)}
                     placeholder="输入用户名"
-                    className="w-40"
+                    className="w-full"
                   />
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1 flex-1 min-w-[140px]">
                   <label className="text-xs text-muted-foreground">密码</label>
                   <Input
                     type="password"
@@ -378,7 +382,7 @@ export default function SettingsPage() {
                     onChange={e => setAuthPassword(e.target.value)}
                     onKeyDown={e => e.key === "Enter" && authAction("login")}
                     placeholder="输入密码"
-                    className="w-40"
+                    className="w-full"
                   />
                 </div>
                 <Button size="sm" onClick={() => authAction("login")} disabled={authLoading}>
@@ -453,7 +457,7 @@ export default function SettingsPage() {
               </div>
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">负责任务</label>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {ALL_TASKS.map(task => (
                     <Badge
                       key={task.value}
@@ -485,14 +489,14 @@ export default function SettingsPage() {
           {!adminAuthed ? (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">输入管理密码以查看和管理用户</p>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Input
                   type="password"
                   value={adminPassword}
                   onChange={e => setAdminPassword(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && loadAdminUsers()}
                   placeholder="管理密码"
-                  className="w-60"
+                  className="w-full sm:w-60"
                 />
                 <Button size="sm" onClick={() => loadAdminUsers()} disabled={adminLoading}>
                   {adminLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Shield className="h-3.5 w-3.5" />}

@@ -7,6 +7,11 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
   return Math.min(max, Math.max(min, Math.floor(value)))
 }
 
+function minInteger(value: unknown, min: number, fallback: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback
+  return Math.max(min, Math.floor(value))
+}
+
 export async function GET() {
   const settings = await prisma.settings.findFirst()
   if (!settings) {
@@ -37,8 +42,8 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   const body = await request.json()
-  const batchMaxWords = clampInteger(body.batchMaxWords, 1, 100, 50)
-  const batchConcurrency = clampInteger(body.batchConcurrency, 1, 5, 3)
+  const batchMaxWords = clampInteger(body.batchMaxWords, 1, 1000, 50)
+  const batchConcurrency = minInteger(body.batchConcurrency, 1, 3)
 
   const username = await getCurrentUsername()
   if (username && body.aiEndpoints !== undefined) {

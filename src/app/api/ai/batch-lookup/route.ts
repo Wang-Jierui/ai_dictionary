@@ -11,8 +11,8 @@ import {
   type BatchLookupFailure,
 } from "@/lib/lookup-service"
 
-const MAX_BATCH_WORDS = 100
-const MAX_UNIQUE_LOOKUP_WORDS = 50
+const MAX_BATCH_WORDS = 1000
+const MAX_UNIQUE_LOOKUP_WORDS = 1000
 const MAX_WORD_LENGTH = 64
 
 type UniqueWordLookup = {
@@ -106,9 +106,8 @@ export async function POST(request: Request) {
   await recordSearchHistory(uniqueWords)
 
   const uniqueLookupItems = uniqueWords.map(word => ({ word }))
-  const maxConcurrency = 5
-  const defaultConcurrency = clampLookupConcurrency(settings.batchConcurrency, 3, maxConcurrency)
-  const concurrency = clampLookupConcurrency(body.concurrency, defaultConcurrency, maxConcurrency)
+  const defaultConcurrency = clampLookupConcurrency(settings.batchConcurrency)
+  const concurrency = clampLookupConcurrency(body.concurrency, defaultConcurrency)
 
   const uniqueResults = await runWorkerPool(uniqueLookupItems, concurrency, item => lookupUniqueWord(item, settings))
   const resultsByWord = new Map(uniqueResults.map(result => [result.word, result]))

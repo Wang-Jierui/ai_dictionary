@@ -66,9 +66,9 @@ export function normalizeLookupWord(word: string) {
   return word.trim().toLowerCase()
 }
 
-export function clampLookupConcurrency(value: unknown, defaultConcurrency = 3, maxConcurrency = 5) {
+export function clampLookupConcurrency(value: unknown, defaultConcurrency = 3) {
   if (typeof value !== "number" || !Number.isFinite(value)) return defaultConcurrency
-  return Math.min(maxConcurrency, Math.max(1, Math.floor(value)))
+  return Math.max(1, Math.floor(value))
 }
 
 function toStringValue(value: unknown) {

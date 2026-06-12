@@ -25,6 +25,11 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
   return Math.min(max, Math.max(min, Math.floor(value)))
 }
 
+function minInteger(value: unknown, min: number, fallback: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback
+  return Math.max(min, Math.floor(value))
+}
+
 export default function BatchPage() {
   const [inputText, setInputText] = useState("")
   const [loading, setLoading] = useState(false)
@@ -38,8 +43,8 @@ export default function BatchPage() {
     fetch("/api/settings")
       .then(res => res.json())
       .then(data => {
-        setMaxWords(clampInteger(data.batchMaxWords, 1, 100, 50))
-        setConcurrency(clampInteger(data.batchConcurrency, 1, 5, 3))
+        setMaxWords(clampInteger(data.batchMaxWords, 1, 1000, 50))
+        setConcurrency(minInteger(data.batchConcurrency, 1, 3))
       })
       .catch(() => undefined)
   }, [])
