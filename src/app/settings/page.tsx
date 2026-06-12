@@ -22,10 +22,17 @@ const INTEREST_PRESETS = [
   "美食", "旅行", "历史", "科技", "动漫", "文学", "商业",
 ]
 
+function clampInteger(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.floor(value)))
+}
+
 export default function SettingsPage() {
   const [interests, setInterests] = useState<string[]>([])
   const [customInterest, setCustomInterest] = useState("")
   const [customPrompt, setCustomPrompt] = useState("")
+  const [batchMaxWords, setBatchMaxWords] = useState(50)
+  const [batchConcurrency, setBatchConcurrency] = useState(3)
   const [endpoints, setEndpoints] = useState<AIEndpointConfig[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -52,6 +59,8 @@ export default function SettingsPage() {
       setCurrentUser(authData.username ?? null)
       setInterests(settingsData.interests ?? [])
       setCustomPrompt(settingsData.customPrompt ?? "")
+      setBatchMaxWords(clampInteger(Number(settingsData.batchMaxWords), 1, 100, 50))
+      setBatchConcurrency(clampInteger(Number(settingsData.batchConcurrency), 1, 5, 3))
       const eps = typeof settingsData.aiEndpoints === "string"
         ? JSON.parse(settingsData.aiEndpoints || "[]")
         : settingsData.aiEndpoints ?? []
@@ -101,6 +110,11 @@ export default function SettingsPage() {
   }
 
   const save = async () => {
+    const safeBatchMaxWords = clampInteger(batchMaxWords, 1, 100, 50)
+    const safeBatchConcurrency = clampInteger(batchConcurrency, 1, 5, 3)
+    setBatchMaxWords(safeBatchMaxWords)
+    setBatchConcurrency(safeBatchConcurrency)
+
     setSaving(true)
     await fetch("/api/settings", {
       method: "PUT",
@@ -108,6 +122,8 @@ export default function SettingsPage() {
       body: JSON.stringify({
         interests,
         customPrompt,
+        batchMaxWords: safeBatchMaxWords,
+        batchConcurrency: safeBatchConcurrency,
         aiEndpoints: endpoints,
       }),
     })
@@ -286,6 +302,38 @@ export default function SettingsPage() {
             placeholder="输入自定义提示词..."
             rows={3}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">批量查词设置</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">最大单词数</label>
+              <p className="text-xs text-muted-foreground">单次批量查询允许的最大单词数量 (1-100)</p>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={batchMaxWords}
+                onChange={e => setBatchMaxWords(clampInteger(e.currentTarget.valueAsNumber, 1, 100, 50))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">并发请求数</label>
+              <p className="text-xs text-muted-foreground">同时处理的单词数量 (1-5)</p>
+              <Input
+                type="number"
+                min={1}
+                max={5}
+                value={batchConcurrency}
+                onChange={e => setBatchConcurrency(clampInteger(e.currentTarget.valueAsNumber, 1, 5, 3))}
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
 

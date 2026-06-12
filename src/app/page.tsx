@@ -531,6 +531,19 @@ function HomeContent() {
     }
   }
 
+  const clearAll = () => {
+    setHistory([])
+    localStorage.removeItem(HISTORY_KEY)
+    
+    setResults(prev => {
+      const next = new Map()
+      if (activeWord && prev.has(activeWord)) {
+        next.set(activeWord, prev.get(activeWord)!)
+      }
+      return next
+    })
+  }
+
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -552,41 +565,53 @@ function HomeContent() {
           </Button>
         </div>
 
-        {results.size > 0 && (
-          <div className="flex items-center gap-1 flex-wrap">
-            {[...results.entries()].map(([w, r]) => (
-              <div
-                key={w}
-                className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm cursor-pointer border transition-colors ${
-                  activeWord === w
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-muted hover:bg-muted/80 border-transparent"
-                }`}
-                onClick={() => setActiveWord(w)}
-              >
-                {(r.loadingDict || r.loadingAI) && <Loader2 className="h-3 w-3 animate-spin" />}
-                {w}
-                <span
-                  className="ml-1 opacity-60 hover:opacity-100"
-                  onClick={e => { e.stopPropagation(); removeResult(w) }}
-                >×</span>
-              </div>
-            ))}
-          </div>
-        )}
+        {(results.size > 0 || history.length > 0) && (
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-3 flex-1">
+              {results.size > 0 && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[...results.entries()].map(([w, r]) => (
+                    <div
+                      key={w}
+                      className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm cursor-pointer border transition-colors ${
+                        activeWord === w
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-muted hover:bg-muted/80 border-transparent"
+                      }`}
+                      onClick={() => setActiveWord(w)}
+                    >
+                      {(r.loadingDict || r.loadingAI) && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {w}
+                      <span
+                        className="ml-1 opacity-60 hover:opacity-100"
+                        onClick={e => { e.stopPropagation(); removeResult(w) }}
+                      >×</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-        {history.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <HistoryIcon className="h-3.5 w-3.5 text-muted-foreground" />
-            {history.map(w => (
-              <Badge
-                key={w}
-                className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
-                onClick={() => searchWord(w)}
-              >
-                {w}
-              </Badge>
-            ))}
+              {history.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <HistoryIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                  {history.map(w => (
+                    <Badge
+                      key={w}
+                      className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
+                      onClick={() => searchWord(w)}
+                    >
+                      {w}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+            {(results.size > 1 || history.length > 0) && (
+              <Button variant="ghost" size="sm" onClick={clearAll} className="h-7 px-2 text-xs text-muted-foreground shrink-0 mt-1">
+                <Trash2 className="h-3.5 w-3.5 mr-1" />
+                清空记录
+              </Button>
+            )}
           </div>
         )}
       </div>

@@ -1,14 +1,12 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Loader2, Upload, Play, CheckCircle2, XCircle, FileText, ListPlus, AlertTriangle, RefreshCw } from "lucide-react"
 import type { DictionaryEntry, AIWordData } from "@/types/dictionary"
-
-const MAX_UNIQUE_LOOKUP_WORDS = 50
 
 interface BatchLookupResult {
   index: number
@@ -22,12 +20,29 @@ interface BatchLookupResult {
 
 type LookupQueueItem = Pick<BatchLookupResult, "index" | "word">
 
+function clampInteger(value: unknown, min: number, max: number, fallback: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.floor(value)))
+}
+
 export default function BatchPage() {
   const [inputText, setInputText] = useState("")
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<BatchLookupResult[]>([])
   const [error, setError] = useState("")
+  const [maxWords, setMaxWords] = useState(50)
+  const [concurrency, setConcurrency] = useState(3)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then(res => res.json())
+      .then(data => {
+        setMaxWords(clampInteger(data.batchMaxWords, 1, 100, 50))
+        setConcurrency(clampInteger(data.batchConcurrency, 1, 5, 3))
+      })
+      .catch(() => undefined)
+  }, [])
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -121,8 +136,8 @@ export default function BatchPage() {
         await processNext()
       }
 
-      const concurrency = Math.min(3, items.length)
-      for (let i = 0; i < concurrency; i++) {
+      const workerConcurrency = Math.min(concurrency, items.length)
+      for (let i = 0; i < workerConcurrency; i++) {
         activePromises.push(processNext())
       }
 
@@ -147,8 +162,8 @@ export default function BatchPage() {
       return
     }
 
-    if (uniqueWords.length > MAX_UNIQUE_LOOKUP_WORDS) {
-      setError(`一次最多查询 ${MAX_UNIQUE_LOOKUP_WORDS} 个不重复单词，请拆分后再试`)
+    if (uniqueWords.length > maxWords) {
+      setError(`一次最多查询 ${maxWords} 个不重复单词，请拆分后再试`)
       return
     }
 
@@ -196,7 +211,7 @@ export default function BatchPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            支持每行一个单词，或使用逗号、空格分隔。自动忽略空行和重复项。
+            支持每行一个单词，或使用逗号、空格分隔。自动忽略空行和重复项。当前最多 {maxWords} 个词，并发 {concurrency} 个请求。
           </p>
           
           <Textarea

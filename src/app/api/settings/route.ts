@@ -2,6 +2,11 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getCurrentUsername } from "@/lib/auth"
 
+function clampInteger(value: unknown, min: number, max: number, fallback: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.floor(value)))
+}
+
 export async function GET() {
   const settings = await prisma.settings.findFirst()
   if (!settings) {
@@ -32,6 +37,8 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   const body = await request.json()
+  const batchMaxWords = clampInteger(body.batchMaxWords, 1, 100, 50)
+  const batchConcurrency = clampInteger(body.batchConcurrency, 1, 5, 3)
 
   const username = await getCurrentUsername()
   if (username && body.aiEndpoints !== undefined) {
@@ -46,12 +53,16 @@ export async function PUT(request: Request) {
     update: {
       interests: body.interests,
       customPrompt: body.customPrompt,
+      batchMaxWords,
+      batchConcurrency,
       ...(username ? {} : { aiEndpoints: body.aiEndpoints }),
     },
     create: {
       id: "default",
       interests: body.interests ?? [],
       customPrompt: body.customPrompt ?? "",
+      batchMaxWords,
+      batchConcurrency,
       aiEndpoints: body.aiEndpoints ?? JSON.stringify([]),
     },
   })

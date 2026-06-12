@@ -8,12 +8,14 @@ datasource db {
 }
 
 model Settings {
-  id            String   @id @default("default")
-  interests     String[] @default([])
-  customPrompt  String   @default("")
-  aiEndpoints   Json     @default("[]")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String   @id @default("default")
+  interests        String[] @default([])
+  customPrompt     String   @default("")
+  aiEndpoints      Json     @default("[]")
+  batchMaxWords    Int      @default(50)
+  batchConcurrency Int      @default(3)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model SearchHistory {
@@ -26,18 +28,18 @@ model SearchHistory {
 }
 
 model Vocabulary {
-  id              String   @id @default(cuid())
-  word            String   @unique
-  phonetic        String?
-  briefDefinition String
+  id                String   @id @default(cuid())
+  word              String   @unique
+  phonetic          String?
+  briefDefinition   String
   chineseDefinition String?
-  notes           String?
-  dictData        Json?
-  aiData          Json?
-  imageData       String?
-  imageMode       String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  notes             String?
+  dictData          Json?
+  aiData            Json?
+  imageData         String?
+  imageMode         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([createdAt])
 }

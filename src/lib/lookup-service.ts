@@ -31,6 +31,8 @@ type CachedLookup = {
 type LookupSettings = {
   interests: string[]
   customPrompt: string
+  batchMaxWords: number
+  batchConcurrency: number
 }
 
 export type FreshLookup = {
@@ -64,9 +66,9 @@ export function normalizeLookupWord(word: string) {
   return word.trim().toLowerCase()
 }
 
-export function clampLookupConcurrency(value: unknown, defaultConcurrency = 3) {
+export function clampLookupConcurrency(value: unknown, defaultConcurrency = 3, maxConcurrency = 5) {
   if (typeof value !== "number" || !Number.isFinite(value)) return defaultConcurrency
-  return Math.min(5, Math.max(1, Math.floor(value)))
+  return Math.min(maxConcurrency, Math.max(1, Math.floor(value)))
 }
 
 function toStringValue(value: unknown) {
@@ -290,6 +292,8 @@ export async function getLookupSettings(): Promise<LookupSettings> {
   return {
     interests: settings?.interests ?? [],
     customPrompt: settings?.customPrompt ?? "",
+    batchMaxWords: settings?.batchMaxWords ?? 50,
+    batchConcurrency: settings?.batchConcurrency ?? 3,
   }
 }
 

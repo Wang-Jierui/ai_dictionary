@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Settings" ADD COLUMN "batchMaxWords" INTEGER NOT NULL DEFAULT 50,
+ADD COLUMN "batchConcurrency" INTEGER NOT NULL DEFAULT 3;

@@ -44,6 +44,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Expected JSON body { words: string[], concurrency?: number }" }, { status: 400 })
   }
 
+  const settings = await getLookupSettings()
+  const maxUniqueWords = Math.min(MAX_UNIQUE_LOOKUP_WORDS, Math.max(1, Math.floor(settings.batchMaxWords)))
+
   if (body.words.length > MAX_BATCH_WORDS) {
     return NextResponse.json(
       { error: `Too many words submitted. Maximum is ${MAX_BATCH_WORDS}.` },
@@ -93,9 +96,9 @@ export async function POST(request: Request) {
 
   const uniqueWords = Array.from(new Set(lookupWords.map(item => item.word)))
 
-  if (uniqueWords.length > MAX_UNIQUE_LOOKUP_WORDS) {
+  if (uniqueWords.length > maxUniqueWords) {
     return NextResponse.json(
-      { error: `Too many unique lookup words. Maximum is ${MAX_UNIQUE_LOOKUP_WORDS}.` },
+      { error: `Too many unique lookup words. Maximum is ${maxUniqueWords}.` },
       { status: 413 },
     )
   }
@@ -103,8 +106,9 @@ export async function POST(request: Request) {
   await recordSearchHistory(uniqueWords)
 
   const uniqueLookupItems = uniqueWords.map(word => ({ word }))
-  const settings = await getLookupSettings()
-  const concurrency = clampLookupConcurrency(body.concurrency)
+  const maxConcurrency = 5
+  const defaultConcurrency = clampLookupConcurrency(settings.batchConcurrency, 3, maxConcurrency)
+  const concurrency = clampLookupConcurrency(body.concurrency, defaultConcurrency, maxConcurrency)
 
   const uniqueResults = await runWorkerPool(uniqueLookupItems, concurrency, item => lookupUniqueWord(item, settings))
   const resultsByWord = new Map(uniqueResults.map(result => [result.word, result]))
