@@ -135,8 +135,6 @@ function toJsonInput(value: DictionaryEntry | AIWordData): Prisma.InputJsonValue
 export async function saveVocabularyLookup(word: string, dictData: DictionaryEntry | null, aiData: AIWordData) {
   const dictJson = dictData ? toJsonInput(dictData) : undefined
   const aiJson = toJsonInput(aiData)
-  const now = new Date()
-
   return prisma.vocabulary.upsert({
     where: { word },
     update: {
@@ -153,7 +151,8 @@ export async function saveVocabularyLookup(word: string, dictData: DictionaryEnt
       chineseDefinition: aiData.chineseDefinition,
       dictData: dictJson,
       aiData: aiJson,
-      reviewDueAt: now,
+      reviewEnabled: false,
+      reviewDueAt: null,
       reviewLastReviewedAt: null,
       reviewRepetitionCount: SM2_DEFAULT_REPETITION_COUNT,
       reviewIntervalDays: SM2_DEFAULT_INTERVAL_DAYS,

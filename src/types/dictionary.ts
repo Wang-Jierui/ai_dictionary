@@ -101,6 +101,7 @@ export interface VocabularyEntry {
   aiData?: AIWordData | null
   imageData?: string | null
   imageMode?: "mood" | "meme" | null
+  reviewEnabled: boolean
   review?: VocabularyReviewState | null
   createdAt: Date
 }

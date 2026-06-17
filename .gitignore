@@ -53,5 +53,6 @@ next-env.d.ts
 # local browser QA screenshots
 /blank-page-check.png
 /lookup-*.png
+/review-*.png
 /settings-*.png
 /vocabulary-*.png

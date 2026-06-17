@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import {
   BookOpen,
   CheckCircle2,
@@ -29,17 +29,12 @@ import { Textarea } from "@/components/ui/textarea"
 import { AiLearningSection, WordImagePanel, type WordImageMode } from "@/components/ai-learning-sections"
 import { WordChatPanel } from "@/components/word-chat-panel"
 import {
-  REVIEW_GRADES,
-  VOCABULARY_FILTER_IDS,
   VOCABULARY_SORT_IDS,
   type AISectionId,
-  type ReviewGradeValue,
   type SortOrder,
-  type VocabularyFilterId,
   type VocabularySortId,
 } from "@/lib/constants"
 import { DEFAULT_SECTION_ORDER, sanitizeSectionOrder } from "@/lib/section-order"
-import { applyReviewedEntryUpdate } from "@/lib/vocabulary-review"
 import type { VocabularyEntry, VocabularyReviewState } from "@/types/dictionary"
 
 const SORT_LABELS: Record<VocabularySortId, string> = {
@@ -49,26 +44,23 @@ const SORT_LABELS: Record<VocabularySortId, string> = {
   due: "复习时间",
 }
 
-const FILTER_LABELS: Record<VocabularyFilterId, string> = {
-  all: "全部",
-  due: "待复习",
-  new: "新学习",
-  learning: "学习中",
-  mastered: "已掌握",
-}
+const LIBRARY_FILTER_IDS = ["all", "studying", "library"] as const
+type LibraryFilterId = (typeof LIBRARY_FILTER_IDS)[number]
 
-const REVIEW_BUTTONS: { grade: ReviewGradeValue; label: string; tone: string }[] = [
-  { grade: REVIEW_GRADES.again, label: "忘记", tone: "border-red-200 hover:bg-red-50 hover:text-red-600" },
-  { grade: REVIEW_GRADES.hard, label: "困难", tone: "border-orange-200 hover:bg-orange-50 hover:text-orange-600" },
-  { grade: REVIEW_GRADES.good, label: "记得", tone: "border-green-200 hover:bg-green-50 hover:text-green-600" },
-  { grade: REVIEW_GRADES.easy, label: "简单", tone: "border-blue-200 hover:bg-blue-50 hover:text-blue-600" },
-]
+const DEFAULT_REVIEW_PLAN_ID = "default"
+
+const FILTER_LABELS: Record<LibraryFilterId, string> = {
+  all: "全部",
+  studying: "学习中",
+  library: "仅收藏",
+}
 
 const SELECT_CONTROL_CLASS = "h-9 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-8 text-sm shadow-sm transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:w-36"
 
 type VocabularyWireEntry = Omit<Partial<VocabularyEntry>, "createdAt" | "imageMode"> & {
   createdAt?: string | Date
   imageMode?: string | null
+  reviewEnabled?: boolean
   review?: VocabularyReviewState | null
   reviewEaseFactor?: number
   reviewIntervalDays?: number
@@ -76,6 +68,24 @@ type VocabularyWireEntry = Omit<Partial<VocabularyEntry>, "createdAt" | "imageMo
   reviewLapses?: number
   reviewDueAt?: string | Date | null
   reviewLastReviewedAt?: string | Date | null
+}
+
+type ReviewPlan = {
+  id: string
+  name: string
+  isDefault: boolean
+  wordCount: number
+}
+
+type BulkAction = "add" | "remove" | "delete" | null
+
+type DragSelectionState = {
+  pointerId: number
+  startX: number
+  startY: number
+  startId: string
+  shouldSelect: boolean
+  dragging: boolean
 }
 
 export default function VocabularyPage() {
@@ -86,7 +96,7 @@ export default function VocabularyPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<VocabularySortId>("created")
   const [order, setOrder] = useState<SortOrder>("desc")
-  const [filter, setFilter] = useState<VocabularyFilterId>("all")
+  const [filter, setFilter] = useState<LibraryFilterId>("all")
   const [randomSeed] = useState(() => new Date().toISOString().slice(0, 10))
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [expandedData, setExpandedData] = useState<VocabularyEntry | null>(null)
@@ -96,8 +106,15 @@ export default function VocabularyPage() {
   const [generatingImage, setGeneratingImage] = useState(false)
   const [editingNotes, setEditingNotes] = useState(false)
   const [notesValue, setNotesValue] = useState("")
-  const [grading, setGrading] = useState(false)
+  const [reviewPlans, setReviewPlans] = useState<ReviewPlan[]>([])
+  const [planDialogOpen, setPlanDialogOpen] = useState(false)
+  const [planDialogIds, setPlanDialogIds] = useState<string[]>([])
+  const [planDialogSelection, setPlanDialogSelection] = useState<Set<string>>(() => new Set())
+  const [bulkAction, setBulkAction] = useState<BulkAction>(null)
+  const [draggingSelection, setDraggingSelection] = useState(false)
   const detailRequestId = useRef(0)
+  const dragSelectionRef = useRef<DragSelectionState | null>(null)
+  const suppressNextRowClickRef = useRef(false)
 
   const currentIndex = useMemo(
     () => words.findIndex(entry => entry.id === expandedId),
@@ -107,6 +124,12 @@ export default function VocabularyPage() {
     () => words.filter(entry => selectedIds.has(entry.id)).map(entry => entry.word),
     [selectedIds, words],
   )
+  const selectedEntries = useMemo(
+    () => words.filter(entry => selectedIds.has(entry.id)),
+    [selectedIds, words],
+  )
+  const selectedEntryIds = useMemo(() => selectedEntries.map(entry => entry.id), [selectedEntries])
+  const allVisibleSelected = words.length > 0 && selectedEntries.length === words.length
 
   const fetchWords = useCallback(async () => {
     setLoading(true)
@@ -114,10 +137,11 @@ export default function VocabularyPage() {
       const params = new URLSearchParams({
         sort,
         order,
-        filter,
         search: searchQuery,
         randomSeed,
       })
+      if (filter === "studying") params.set("review", "enabled")
+      if (filter === "library") params.set("review", "disabled")
       const res = await fetch(`/api/vocabulary?${params.toString()}`)
       if (!res.ok) throw new Error("生词本加载失败")
       const data = (await res.json()) as VocabularyWireEntry[]
@@ -143,6 +167,36 @@ export default function VocabularyPage() {
     }, 300)
     return () => window.clearTimeout(timer)
   }, [fetchWords])
+
+  useEffect(() => {
+    const visibleIds = new Set(words.map(entry => entry.id))
+    setSelectedIds(prev => {
+      const next = new Set(Array.from(prev).filter(id => visibleIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [words])
+
+  useEffect(() => {
+    const endDrag = () => {
+      dragSelectionRef.current = null
+      setDraggingSelection(false)
+    }
+
+    window.addEventListener("pointerup", endDrag)
+    window.addEventListener("pointercancel", endDrag)
+    return () => {
+      window.removeEventListener("pointerup", endDrag)
+      window.removeEventListener("pointercancel", endDrag)
+    }
+  }, [])
+
+  const fetchReviewPlans = useCallback(async () => {
+    const res = await fetch("/api/review-plans")
+    if (!res.ok) throw new Error("复习计划加载失败")
+    const data = (await res.json()) as ReviewPlan[]
+    setReviewPlans(data)
+    return data
+  }, [])
 
   const loadDetail = useCallback(async (id: string) => {
     const listEntry = words.find(entry => entry.id === id)
@@ -173,25 +227,53 @@ export default function VocabularyPage() {
     }
   }, [words])
 
-  const deleteWord = async (id: string) => {
-    const res = await fetch(`/api/vocabulary?id=${encodeURIComponent(id)}`, { method: "DELETE" })
-    if (!res.ok) {
-      setLoadError("删除失败，请稍后重试")
-      return
-    }
-
-    setWords(prev => prev.filter(entry => entry.id !== id))
+  const removeDeletedWordsFromState = (ids: string[]) => {
+    const deletedIds = new Set(ids)
+    setWords(prev => prev.filter(entry => !deletedIds.has(entry.id)))
     setSelectedIds(prev => {
       const next = new Set(prev)
-      next.delete(id)
+      for (const id of ids) next.delete(id)
       return next
     })
-    if (expandedId === id) {
+    if (expandedId && deletedIds.has(expandedId)) {
       setExpandedId(null)
       setExpandedData(null)
       setEditingNotes(false)
     }
   }
+
+  const deleteWords = async (ids: string[]) => {
+    if (ids.length === 0 || bulkAction) return
+    if (ids.length > 5 && !window.confirm(`确定删除 ${ids.length} 个生词？删除后也会从所有复习计划移除。`)) return
+
+    setBulkAction("delete")
+    try {
+      for (const id of ids) {
+        const res = await fetch(`/api/vocabulary?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+        if (!res.ok) throw new Error("删除失败，请稍后重试")
+      }
+      removeDeletedWordsFromState(ids)
+      setLoadError("")
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "删除失败，请稍后重试")
+    } finally {
+      setBulkAction(null)
+    }
+  }
+
+  const deleteWord = async (id: string) => {
+    await deleteWords([id])
+  }
+
+  const setSelectionForId = useCallback((id: string, shouldSelect: boolean) => {
+    setSelectedIds(prev => {
+      if (prev.has(id) === shouldSelect) return prev
+      const next = new Set(prev)
+      if (shouldSelect) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -202,16 +284,21 @@ export default function VocabularyPage() {
     })
   }
 
+  const selectAllVisible = () => {
+    setSelectedIds(new Set(words.map(entry => entry.id)))
+  }
+
+  const clearSelection = () => {
+    setSelectedIds(new Set())
+  }
+
   const goToStory = () => {
     if (selectedStoryWords.length < 2) return
-    window.location.href = `/story?words=${encodeURIComponent(selectedStoryWords.join(","))}`
+    window.location.href = `/practice/story?words=${encodeURIComponent(selectedStoryWords.join(","))}`
   }
 
   const startReview = () => {
-    const now = new Date()
-    const firstDue = words.find(entry => !entry.review?.dueAt || new Date(entry.review.dueAt) <= now)
-    const target = firstDue ?? words[0]
-    if (target) void loadDetail(target.id)
+    window.location.href = "/review"
   }
 
   const navigateLoadedList = (direction: -1 | 1) => {
@@ -222,38 +309,142 @@ export default function VocabularyPage() {
     void loadDetail(words[nextIndex].id)
   }
 
-  const submitReview = async (grade: ReviewGradeValue) => {
-    if (!expandedData || grading) return
-    setGrading(true)
+  const applyVocabularyUpdates = (updatedRows: VocabularyEntry[]) => {
+    const updatedById = new Map(updatedRows.map(entry => [entry.id, entry]))
+    setWords(prev => prev.map(entry => updatedById.has(entry.id) ? { ...entry, ...updatedById.get(entry.id) } : entry))
+    setExpandedData(prev => prev && updatedById.has(prev.id) ? { ...prev, ...updatedById.get(prev.id) } : prev)
+  }
+
+  const setReviewEnrollment = async (ids: string[], reviewEnabled: boolean, planId?: string) => {
+    if (ids.length === 0) return
     try {
-      const res = await fetch("/api/vocabulary/review", {
-        method: "POST",
+      const res = await fetch("/api/vocabulary", {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: expandedData.id, grade }),
+        body: JSON.stringify({ ids, reviewEnabled, ...(planId ? { planId } : {}) }),
       })
-      if (!res.ok) throw new Error("评分失败")
-      const updated = normalizeVocabularyEntry((await res.json()) as VocabularyWireEntry, expandedData)
-      const removed = filter === "due" && updated.review?.dueAt && new Date(updated.review.dueAt) > new Date()
-      setWords(prev => applyReviewedEntryUpdate(prev, updated, filter))
-      if (removed) {
-        if (expandedId === updated.id) {
-          setExpandedId(null)
-          setExpandedData(null)
-        }
-        setSelectedIds(prev => {
-          const next = new Set(prev)
-          next.delete(updated.id)
-          return next
-        })
-      } else {
-        setExpandedData(prev => (prev?.id === updated.id ? { ...prev, ...updated } : prev))
-      }
+      if (!res.ok) throw new Error(reviewEnabled ? "加入学习失败" : "移出学习失败")
+      const updatedRows = ((await res.json()) as VocabularyWireEntry[]).map(entry => normalizeVocabularyEntry(entry))
+      applyVocabularyUpdates(updatedRows)
       setLoadError("")
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "评分失败")
-    } finally {
-      setGrading(false)
+      setLoadError(err instanceof Error ? err.message : "学习状态更新失败")
     }
+  }
+
+  const addToReviewPlans = async (ids: string[]) => {
+    if (ids.length === 0 || bulkAction) return
+    if (ids.length > 5 && !window.confirm(`确定将 ${ids.length} 个生词加入复习计划？`)) return
+
+    setBulkAction("add")
+    try {
+      const plans = reviewPlans.length > 0 ? reviewPlans : await fetchReviewPlans()
+      if (plans.length > 1) {
+        const defaultPlan = plans.find(plan => plan.isDefault) ?? plans[0]
+        setPlanDialogIds(ids)
+        setPlanDialogSelection(new Set(defaultPlan ? [defaultPlan.id] : []))
+        setPlanDialogOpen(true)
+        return
+      }
+
+      await setReviewEnrollment(ids, true, plans[0]?.id ?? DEFAULT_REVIEW_PLAN_ID)
+      await fetchReviewPlans()
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "加入学习失败")
+    } finally {
+      setBulkAction(null)
+    }
+  }
+
+  const confirmAddToSelectedPlans = async () => {
+    const planIds = Array.from(planDialogSelection)
+    if (planDialogIds.length === 0 || planIds.length === 0 || bulkAction) return
+
+    setBulkAction("add")
+    try {
+      const updatedRows: VocabularyEntry[] = []
+      for (const planId of planIds) {
+        const res = await fetch("/api/vocabulary", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: planDialogIds, reviewEnabled: true, planId }),
+        })
+        if (!res.ok) throw new Error("加入复习计划失败")
+        updatedRows.push(...((await res.json()) as VocabularyWireEntry[]).map(entry => normalizeVocabularyEntry(entry)))
+      }
+      applyVocabularyUpdates(updatedRows)
+      await fetchReviewPlans()
+      setPlanDialogOpen(false)
+      setPlanDialogIds([])
+      setPlanDialogSelection(new Set())
+      setLoadError("")
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "加入复习计划失败")
+    } finally {
+      setBulkAction(null)
+    }
+  }
+
+  const removeFromLearning = async (ids: string[]) => {
+    if (ids.length === 0 || bulkAction) return
+    if (ids.length > 5 && !window.confirm(`确定将 ${ids.length} 个生词从所有复习计划移出？`)) return
+
+    setBulkAction("remove")
+    try {
+      await setReviewEnrollment(ids, false)
+      await fetchReviewPlans()
+    } finally {
+      setBulkAction(null)
+    }
+  }
+
+  const beginRowPointer = (event: ReactPointerEvent<HTMLDivElement>, id: string) => {
+    if (event.button !== 0) return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest("button, input, select, textarea, a")) return
+    dragSelectionRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startId: id,
+      shouldSelect: !selectedIds.has(id),
+      dragging: false,
+    }
+  }
+
+  const activateDragSelection = (id: string) => {
+    const drag = dragSelectionRef.current
+    if (!drag) return
+    drag.dragging = true
+    suppressNextRowClickRef.current = true
+    setDraggingSelection(true)
+    setSelectionForId(drag.startId, drag.shouldSelect)
+    setSelectionForId(id, drag.shouldSelect)
+  }
+
+  const moveRowPointer = (event: ReactPointerEvent<HTMLDivElement>, id: string) => {
+    const drag = dragSelectionRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (drag.dragging) {
+      setSelectionForId(id, drag.shouldSelect)
+      return
+    }
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY)
+    if (distance > 6) activateDragSelection(id)
+  }
+
+  const enterRowWhileDragging = (event: ReactPointerEvent<HTMLDivElement>, id: string) => {
+    const drag = dragSelectionRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    activateDragSelection(id)
+  }
+
+  const openRowDetail = (id: string) => {
+    if (suppressNextRowClickRef.current) {
+      suppressNextRowClickRef.current = false
+      return
+    }
+    void loadDetail(id)
   }
 
   const regenerateMnemonic = async (word: string) => {
@@ -348,23 +539,6 @@ export default function VocabularyPage() {
     void new Audio(audioUrl).play()
   }
 
-  const renderReviewButtons = (compact = false) => (
-    <div className={compact ? "grid grid-cols-4 gap-1.5" : "grid w-full grid-cols-4 gap-2 sm:w-auto"}>
-      {REVIEW_BUTTONS.map(button => (
-        <Button
-          key={button.grade}
-          variant="outline"
-          size={compact ? "sm" : undefined}
-          className={`${compact ? "h-8 px-2 text-xs" : "px-2"} ${button.tone}`}
-          disabled={grading}
-          onClick={() => submitReview(button.grade)}
-        >
-          <span className={compact ? "hidden font-mono lg:inline" : "hidden font-mono sm:inline"}>{button.grade}</span>{button.label}
-        </Button>
-      ))}
-    </div>
-  )
-
   const renderReader = () => {
     if (!expandedId) {
       return (
@@ -408,10 +582,6 @@ export default function VocabularyPage() {
                 </Button>
               </div>
             </div>
-            <div className="mt-3 hidden items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2 md:flex">
-              <span className="text-xs font-medium text-muted-foreground">SM-2 记忆评分</span>
-              {renderReviewButtons(true)}
-            </div>
           </div>
 
           <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4">
@@ -429,12 +599,12 @@ export default function VocabularyPage() {
                   </div>
                   <p className="text-sm leading-relaxed text-muted-foreground">{expandedData.briefDefinition}</p>
                 </div>
-                <Button variant="outline" size="sm" onClick={() => { window.location.href = `/roleplay?word=${encodeURIComponent(expandedData.word)}` }}>
+                <Button variant="outline" size="sm" onClick={() => { window.location.href = `/practice/roleplay?word=${encodeURIComponent(expandedData.word)}` }}>
                   <Swords className="h-4 w-4" /> 去实战
                 </Button>
               </div>
 
-              {expandedData.review && (
+              {expandedData.reviewEnabled && expandedData.review && (
                 <div className="flex flex-wrap gap-2 rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">
                   <span className="flex items-center"><CheckCircle2 className="mr-1 h-3 w-3" />复习次数: {expandedData.review.repetitionCount}</span>
                   <span>·</span>
@@ -443,6 +613,14 @@ export default function VocabularyPage() {
                   <span>下次: {expandedData.review.dueAt ? new Date(expandedData.review.dueAt).toLocaleDateString("zh-CN") : "未排期"}</span>
                 </div>
               )}
+              <Button
+                variant={expandedData.reviewEnabled ? "outline" : "default"}
+                size="sm"
+                onClick={() => expandedData.reviewEnabled ? void removeFromLearning([expandedData.id]) : void addToReviewPlans([expandedData.id])}
+                disabled={bulkAction !== null}
+              >
+                {expandedData.reviewEnabled ? "移出学习" : "加入学习"}
+              </Button>
 
               {aiData?.chineseDefinition && (
                 <div className="flex items-start gap-1.5 text-base font-medium">
@@ -519,10 +697,6 @@ export default function VocabularyPage() {
             </Card>
           </div>
 
-          <div className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t bg-background/95 p-4 shadow-[0_-4px_16px_rgba(0,0,0,0.05)] backdrop-blur">
-            <span className="hidden text-sm font-medium text-muted-foreground sm:inline-block">SM-2 记忆评分</span>
-            {renderReviewButtons()}
-          </div>
         </div>
       </Card>
     )
@@ -537,11 +711,11 @@ export default function VocabularyPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">生词本</h1>
-          <p className="text-sm text-muted-foreground">紧凑列表浏览，右侧阅读与 SM-2 复习</p>
+          <p className="text-sm text-muted-foreground">查找、预览和管理收藏词；需要复习的词可手动加入学习。</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {words.length > 0 && <Button variant="outline" onClick={startReview}><BookOpen className="h-4 w-4" />开始复习</Button>}
-          {selectedIds.size >= 2 && <Button onClick={goToStory}><Sparkles className="h-4 w-4" />用 {selectedIds.size} 个词生成故事</Button>}
+          {words.length > 0 && <Button variant="outline" onClick={startReview}><BookOpen className="h-4 w-4" />去复习</Button>}
+          {selectedEntries.length >= 2 && <Button onClick={goToStory}><Sparkles className="h-4 w-4" />用 {selectedEntries.length} 个词生成故事</Button>}
         </div>
       </div>
 
@@ -553,8 +727,8 @@ export default function VocabularyPage() {
         <div className="flex flex-wrap gap-2">
           <label className="relative flex w-full items-center sm:w-auto">
             <Filter className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
-            <select aria-label="筛选生词" value={filter} onChange={event => setFilter(event.target.value as VocabularyFilterId)} className={SELECT_CONTROL_CLASS}>
-              {VOCABULARY_FILTER_IDS.map(id => <option key={id} value={id}>{FILTER_LABELS[id]}</option>)}
+            <select aria-label="筛选生词" value={filter} onChange={event => setFilter(event.target.value as LibraryFilterId)} className={SELECT_CONTROL_CLASS}>
+              {LIBRARY_FILTER_IDS.map(id => <option key={id} value={id}>{FILTER_LABELS[id]}</option>)}
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
           </label>
@@ -573,6 +747,29 @@ export default function VocabularyPage() {
 
       {loadError && <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{loadError}</p>}
 
+      {selectedEntries.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm">
+            <span className="font-medium text-foreground">已选 {selectedEntries.length} 个词</span>
+            <span className="ml-2 text-muted-foreground">批量操作会作用于当前可见选择。</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => void addToReviewPlans(selectedEntryIds)} disabled={bulkAction !== null}>
+              {bulkAction === "add" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              加入复习计划
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void removeFromLearning(selectedEntryIds)} disabled={bulkAction !== null}>
+              {bulkAction === "remove" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              移出学习
+            </Button>
+            <Button variant="outline" size="sm" className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => void deleteWords(selectedEntryIds)} disabled={bulkAction !== null}>
+              {bulkAction === "delete" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              删除
+            </Button>
+          </div>
+        </div>
+      )}
+
       {words.length === 0 && !loading ? (
         <div className="py-20 text-center text-muted-foreground">
           <BookOpen className="mx-auto mb-4 h-12 w-12 opacity-30" />
@@ -580,27 +777,34 @@ export default function VocabularyPage() {
           <p className="mt-1 text-sm">查词成功后会自动加入生词本</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-12 md:gap-6">
-          <div className="flex flex-col gap-2 pr-1 md:sticky md:top-20 md:col-span-5 md:min-h-0 md:max-h-[calc(100vh-6rem)] md:overflow-y-auto lg:col-span-4">
-            <p className="px-1 text-sm text-muted-foreground">共 {words.length} 个单词 · 选择 2 个以上可生成串词故事</p>
+        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[minmax(20rem,0.85fr)_minmax(0,1.15fr)] md:gap-6 xl:grid-cols-[minmax(22rem,0.9fr)_minmax(0,1.1fr)]">
+          <div className="flex min-w-0 flex-col gap-2 pr-1 md:sticky md:top-20 md:min-h-0 md:max-h-[calc(100vh-6rem)] md:overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm text-muted-foreground">
+              <span>共 {words.length} 个单词 · 勾选或拖过行可快速选择</span>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" className="h-7 px-2" onClick={selectAllVisible} disabled={allVisibleSelected}>全选</Button>
+                <Button variant="ghost" size="sm" className="h-7 px-2" onClick={clearSelection} disabled={selectedEntries.length === 0}>全不选</Button>
+              </div>
+            </div>
             {words.map(entry => {
-              const due = !entry.review?.dueAt || new Date(entry.review.dueAt) <= new Date()
               return (
                 <div key={entry.id}>
                   <Card
-                    className={`cursor-pointer transition-colors ${selectedIds.has(entry.id) ? "border-primary bg-primary/5" : ""} ${expandedId === entry.id ? "border-primary bg-primary/5 shadow-sm" : "hover:bg-muted/50"}`}
-                    onClick={() => loadDetail(entry.id)}
+                    className={`cursor-pointer transition-colors ${draggingSelection ? "select-none" : ""} ${selectedIds.has(entry.id) ? "border-primary bg-primary/5" : ""} ${expandedId === entry.id ? "border-primary bg-primary/5 shadow-sm" : "hover:bg-muted/50"}`}
+                    onPointerDown={event => beginRowPointer(event, entry.id)}
+                    onPointerMove={event => moveRowPointer(event, entry.id)}
+                    onPointerEnter={event => enterRowWhileDragging(event, entry.id)}
+                    onClick={() => openRowDetail(entry.id)}
                   >
                     <CardContent className="flex items-center justify-between gap-3 px-4 py-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={() => toggleSelect(entry.id)} onClick={event => event.stopPropagation()} className="h-4 w-4 rounded" />
-                        <div className="min-w-0">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={() => toggleSelect(entry.id)} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()} className="h-4 w-4 rounded" />
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2"><span className="truncate font-medium">{entry.word}</span></div>
                           <p className="line-clamp-1 text-sm text-muted-foreground">{entry.chineseDefinition || entry.briefDefinition}</p>
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
-                        {due && <Badge className="h-5 border-destructive/20 bg-destructive/10 px-1.5 py-0 text-[10px] text-destructive">待复习</Badge>}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -620,7 +824,7 @@ export default function VocabularyPage() {
             })}
             {loading && <div className="py-4 text-center text-muted-foreground"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div>}
           </div>
-          <div className="hidden md:col-span-7 md:block lg:col-span-8">{renderReader()}</div>
+          <div className="hidden min-w-0 md:block">{renderReader()}</div>
         </div>
       )}
 
@@ -635,6 +839,54 @@ export default function VocabularyPage() {
           >
             {renderReader()}
           </div>
+        </div>
+      )}
+
+      {planDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => setPlanDialogOpen(false)}>
+          <Card className="w-full max-w-lg border-primary/20 shadow-lg" onClick={event => event.stopPropagation()}>
+            <CardHeader className="border-b bg-muted/20">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <CardTitle className="text-lg">选择复习计划</CardTitle>
+                  <p className="text-sm text-muted-foreground">将 {planDialogIds.length} 个生词加入一个或多个计划。</p>
+                </div>
+                <Button variant="ghost" size="icon" onClick={() => setPlanDialogOpen(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4 p-4">
+              <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {reviewPlans.map(plan => (
+                  <label key={plan.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border bg-background p-3 hover:bg-muted/40">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={planDialogSelection.has(plan.id)}
+                        onChange={() => setPlanDialogSelection(prev => {
+                          const next = new Set(prev)
+                          if (next.has(plan.id)) next.delete(plan.id)
+                          else next.add(plan.id)
+                          return next
+                        })}
+                        className="h-4 w-4 rounded"
+                      />
+                      <span className="truncate text-sm font-medium">{plan.name}</span>
+                    </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">{plan.wordCount} 词</span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="outline" onClick={() => setPlanDialogOpen(false)} disabled={bulkAction !== null}>取消</Button>
+                <Button onClick={() => void confirmAddToSelectedPlans()} disabled={bulkAction !== null || planDialogSelection.size === 0}>
+                  {bulkAction === "add" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  加入所选计划
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>
@@ -653,6 +905,7 @@ function normalizeVocabularyEntry(entry: VocabularyWireEntry, fallback?: Vocabul
     aiData: entry.aiData ?? fallback?.aiData ?? null,
     imageData: entry.imageData ?? fallback?.imageData ?? null,
     imageMode: entry.imageMode === "mood" || entry.imageMode === "meme" ? entry.imageMode : fallback?.imageMode ?? null,
+    reviewEnabled: entry.reviewEnabled ?? fallback?.reviewEnabled ?? false,
     review: normalizeReview(entry, fallback?.review ?? null),
     createdAt: entry.createdAt ? new Date(entry.createdAt) : fallback?.createdAt ?? new Date(0),
   }

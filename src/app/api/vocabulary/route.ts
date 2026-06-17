@@ -10,6 +10,9 @@ import {
 } from "@/lib/constants"
 import type { VocabularyReviewState } from "@/types/dictionary"
 
+const DEFAULT_REVIEW_PLAN_ID = "default"
+const DEFAULT_REVIEW_PLAN_NAME = "默认复习计划"
+
 const LIST_SELECT = {
   id: true,
   word: true,
@@ -17,6 +20,7 @@ const LIST_SELECT = {
   briefDefinition: true,
   chineseDefinition: true,
   notes: true,
+  reviewEnabled: true,
   reviewEaseFactor: true,
   reviewIntervalDays: true,
   reviewRepetitionCount: true,
@@ -33,6 +37,7 @@ type ListEntry = {
   briefDefinition: string
   chineseDefinition: string | null
   notes: string | null
+  reviewEnabled: boolean
   reviewEaseFactor: number
   reviewIntervalDays: number
   reviewRepetitionCount: number
@@ -60,6 +65,8 @@ export async function GET(request: Request) {
   const sort = searchParams.get("sort") ?? "created"
   const order = searchParams.get("order") ?? "desc"
   const filter = searchParams.get("filter") ?? "all"
+  const review = searchParams.get("review") ?? "all"
+  const planId = searchParams.get("planId")?.trim() || null
   const search = searchParams.get("search")?.trim() ?? ""
   const randomSeed = searchParams.get("randomSeed") ?? getDefaultRandomSeed()
 
@@ -84,7 +91,14 @@ export async function GET(request: Request) {
     )
   }
 
-  const where = buildListWhere(filter, search)
+  if (!isValidEnum(["all", "enabled", "disabled"] as const, review)) {
+    return NextResponse.json(
+      { error: "Invalid review. Must be one of: all, enabled, disabled." },
+      { status: 400 },
+    )
+  }
+
+  const where = buildListWhere(filter, search, review, planId)
   const entries = await prisma.vocabulary.findMany({
     where,
     select: LIST_SELECT,
@@ -101,8 +115,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
   }
 
-  const now = new Date()
-
   const entry = await prisma.vocabulary.upsert({
     where: { word: word.toLowerCase() },
     update: { phonetic, briefDefinition, notes },
@@ -111,7 +123,8 @@ export async function POST(request: Request) {
       phonetic,
       briefDefinition,
       notes,
-      reviewDueAt: now,
+      reviewEnabled: false,
+      reviewDueAt: null,
       reviewLastReviewedAt: null,
       reviewRepetitionCount: 0,
       reviewIntervalDays: 0,
@@ -121,6 +134,64 @@ export async function POST(request: Request) {
   })
 
   return NextResponse.json(entry)
+}
+
+export async function PATCH(request: Request) {
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: "Malformed JSON body" }, { status: 400 })
+  }
+
+  if (!isRecord(body)) {
+    return NextResponse.json({ error: "Expected JSON object" }, { status: 400 })
+  }
+
+  const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0) : []
+  const reviewEnabled = body.reviewEnabled
+  const planId = typeof body.planId === "string" && body.planId.trim().length > 0 ? body.planId.trim() : null
+
+  if (ids.length === 0) {
+    return NextResponse.json({ error: "Missing ids" }, { status: 400 })
+  }
+
+  if (typeof reviewEnabled !== "boolean") {
+    return NextResponse.json({ error: "Missing or invalid reviewEnabled" }, { status: 400 })
+  }
+
+  if (reviewEnabled) {
+    const targetPlanId = planId ?? DEFAULT_REVIEW_PLAN_ID
+    await ensureDefaultReviewPlan()
+    await prisma.reviewPlanWord.createMany({
+      data: ids.map(id => ({ reviewPlanId: targetPlanId, vocabularyId: id })),
+      skipDuplicates: true,
+    })
+    await prisma.vocabulary.updateMany({
+      where: { id: { in: ids } },
+      data: { reviewEnabled: true },
+    })
+  } else if (planId) {
+    await prisma.reviewPlanWord.deleteMany({
+      where: { reviewPlanId: planId, vocabularyId: { in: ids } },
+    })
+    await syncReviewEnabledFromMembership(ids)
+  } else {
+    await prisma.reviewPlanWord.deleteMany({
+      where: { vocabularyId: { in: ids } },
+    })
+    await prisma.vocabulary.updateMany({
+      where: { id: { in: ids } },
+      data: { reviewEnabled: false },
+    })
+  }
+
+  const entries = await prisma.vocabulary.findMany({
+    where: { id: { in: ids } },
+    select: LIST_SELECT,
+  })
+
+  return NextResponse.json(entries.map(toListRow))
 }
 
 export async function DELETE(request: Request) {
@@ -153,12 +224,20 @@ function isValidEnum<T extends readonly string[]>(values: T, value: string): val
   return values.includes(value)
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 function getDefaultRandomSeed(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-function buildListWhere(filter: VocabularyFilterId, search: string): Record<string, unknown> {
+function buildListWhere(filter: VocabularyFilterId, search: string, review: "all" | "enabled" | "disabled", planId: string | null): Record<string, unknown> {
   const conditions: Record<string, unknown>[] = []
+
+  if (planId) conditions.push(reviewPlanCondition(planId))
+  else if (review === "enabled") conditions.push({ reviewEnabled: true })
+  else if (review === "disabled") conditions.push({ reviewEnabled: false })
 
   if (search) {
     conditions.push({
@@ -175,12 +254,15 @@ function buildListWhere(filter: VocabularyFilterId, search: string): Record<stri
 
   switch (filter) {
     case "due":
+      conditions.push(reviewMembershipCondition(planId))
       conditions.push({ OR: [{ reviewDueAt: null }, { reviewDueAt: { lte: now } }] })
       break
     case "new":
+      conditions.push(reviewMembershipCondition(planId))
       conditions.push({ reviewRepetitionCount: 0, reviewLastReviewedAt: null })
       break
     case "learning":
+      conditions.push(reviewMembershipCondition(planId))
       conditions.push({
         AND: [
           { NOT: { reviewRepetitionCount: 0, reviewLastReviewedAt: null } },
@@ -189,6 +271,7 @@ function buildListWhere(filter: VocabularyFilterId, search: string): Record<stri
       })
       break
     case "mastered":
+      conditions.push(reviewMembershipCondition(planId))
       conditions.push({ reviewRepetitionCount: { gte: 5 }, reviewIntervalDays: { gte: 21 } })
       break
     case "all":
@@ -197,6 +280,32 @@ function buildListWhere(filter: VocabularyFilterId, search: string): Record<stri
   }
 
   return conditions.length > 0 ? { AND: conditions } : {}
+}
+
+function reviewMembershipCondition(planId: string | null): Record<string, unknown> {
+  return planId ? reviewPlanCondition(planId) : { reviewEnabled: true }
+}
+
+function reviewPlanCondition(planId: string): Record<string, unknown> {
+  return { reviewPlans: { some: { reviewPlanId: planId } } }
+}
+
+async function ensureDefaultReviewPlan() {
+  await prisma.reviewPlan.upsert({
+    where: { id: DEFAULT_REVIEW_PLAN_ID },
+    update: {},
+    create: { id: DEFAULT_REVIEW_PLAN_ID, name: DEFAULT_REVIEW_PLAN_NAME, isDefault: true },
+  })
+}
+
+async function syncReviewEnabledFromMembership(ids: string[]) {
+  await Promise.all(ids.map(async id => {
+    const membershipCount = await prisma.reviewPlanWord.count({ where: { vocabularyId: id } })
+    await prisma.vocabulary.update({
+      where: { id },
+      data: { reviewEnabled: membershipCount > 0 },
+    })
+  }))
 }
 
 function sortListEntries(
@@ -285,6 +394,7 @@ function toListRow(entry: ListEntry) {
     briefDefinition: entry.briefDefinition,
     chineseDefinition: entry.chineseDefinition,
     notes: entry.notes,
+    reviewEnabled: entry.reviewEnabled,
     review,
     createdAt: entry.createdAt.toISOString(),
   }

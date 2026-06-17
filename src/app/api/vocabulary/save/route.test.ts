@@ -15,7 +15,7 @@ describe("POST /api/vocabulary/save", () => {
     vi.clearAllMocks()
   })
 
-  it("initializes review defaults when creating a new vocabulary row", async () => {
+  it("creates new vocabulary rows as library-only with review defaults", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: false })
     vi.setSystemTime(new Date("2026-06-17T12:00:00.000Z"))
     vi.mocked(prisma.vocabulary.upsert).mockResolvedValue({ id: "v-1" } as never)
@@ -40,7 +40,8 @@ describe("POST /api/vocabulary/save", () => {
     const args = vi.mocked(prisma.vocabulary.upsert).mock.calls[0][0]
     expect(args.create).toMatchObject({
       word: "apple",
-      reviewDueAt: new Date("2026-06-17T12:00:00.000Z"),
+      reviewEnabled: false,
+      reviewDueAt: null,
       reviewLastReviewedAt: null,
       reviewRepetitionCount: 0,
       reviewIntervalDays: 0,
@@ -48,6 +49,7 @@ describe("POST /api/vocabulary/save", () => {
       reviewLapses: 0,
     })
     expect(args.update).not.toHaveProperty("reviewDueAt")
+    expect(args.update).not.toHaveProperty("reviewEnabled")
 
     vi.useRealTimers()
   })

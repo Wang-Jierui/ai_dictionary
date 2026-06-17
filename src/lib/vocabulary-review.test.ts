@@ -7,6 +7,7 @@ function makeEntry(id: string, dueAt: string | null): VocabularyEntry {
     id,
     word: id,
     briefDefinition: "def",
+    reviewEnabled: true,
     createdAt: new Date("2026-06-17T12:00:00.000Z"),
     review: {
       easeFactor: 2.5,

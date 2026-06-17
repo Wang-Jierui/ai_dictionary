@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation"
 import { Suspense, useState, useRef, useEffect, useCallback } from "react"
-import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, History as HistoryIcon, BookOpen, Languages, Trash2, Edit3, Save } from "lucide-react"
+import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, History as HistoryIcon, BookOpen, Languages, Trash2, Edit3, Save, ListPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -335,6 +335,10 @@ function HomeContent() {
           <Button onClick={() => searchWord(query)} className="h-11 px-6">
             查询
           </Button>
+          <Button variant="outline" onClick={() => { window.location.href = "/batch" }} className="h-11 px-4">
+            <ListPlus className="h-4 w-4" />
+            <span className="hidden sm:inline">批量查词</span>
+          </Button>
         </div>
 
         {(results.size > 0 || history.length > 0) && (
@@ -456,7 +460,7 @@ function HomeContent() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => window.location.href = `/roleplay?word=${encodeURIComponent(dictData.word)}`}
+                  onClick={() => window.location.href = `/practice/roleplay?word=${encodeURIComponent(dictData.word)}`}
                 >
                   <Swords className="h-4 w-4" />
                   去实战

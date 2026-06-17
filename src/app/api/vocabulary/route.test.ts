@@ -19,6 +19,7 @@ const mockVocab = [
     briefDefinition: "a round fruit",
     chineseDefinition: "苹果",
     notes: null,
+    reviewEnabled: true,
     reviewEaseFactor: 2.5,
     reviewIntervalDays: 0,
     reviewRepetitionCount: 0,
@@ -34,6 +35,7 @@ const mockVocab = [
     briefDefinition: "a long yellow fruit",
     chineseDefinition: "香蕉",
     notes: null,
+    reviewEnabled: true,
     reviewEaseFactor: 2.5,
     reviewIntervalDays: 21,
     reviewRepetitionCount: 5,
@@ -49,6 +51,7 @@ const mockVocab = [
     briefDefinition: "a small red fruit",
     chineseDefinition: "樱桃",
     notes: null,
+    reviewEnabled: true,
     reviewEaseFactor: 2.5,
     reviewIntervalDays: 10,
     reviewRepetitionCount: 2,
@@ -79,6 +82,7 @@ describe("GET /api/vocabulary list", () => {
       briefDefinition: "a round fruit",
       chineseDefinition: "苹果",
       notes: null,
+      reviewEnabled: true,
       review: {
         easeFactor: 2.5,
         intervalDays: 0,
@@ -120,6 +124,7 @@ describe("GET /api/vocabulary list", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           AND: expect.arrayContaining([
+            expect.objectContaining({ reviewEnabled: true }),
             expect.objectContaining({ reviewRepetitionCount: 0, reviewLastReviewedAt: null }),
           ]),
         }),
@@ -138,6 +143,7 @@ describe("GET /api/vocabulary list", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           AND: expect.arrayContaining([
+            expect.objectContaining({ reviewEnabled: true }),
             expect.objectContaining({
               reviewRepetitionCount: { gte: 5 },
               reviewIntervalDays: { gte: 21 },
@@ -155,6 +161,24 @@ describe("GET /api/vocabulary list", () => {
     const data = await response.json()
 
     expect(data.map((item: { word: string }) => item.word)).toEqual(["cherry"])
+  })
+
+  it("filters review-disabled library items", async () => {
+    vi.mocked(prisma.vocabulary.findMany).mockResolvedValue([{ ...mockVocab[0], reviewEnabled: false } as never])
+
+    const response = await GET(new Request("http://localhost/api/vocabulary?review=disabled"))
+    const data = await response.json()
+
+    expect(data.map((item: { word: string }) => item.word)).toEqual(["apple"])
+    expect(prisma.vocabulary.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            expect.objectContaining({ reviewEnabled: false }),
+          ]),
+        }),
+      }),
+    )
   })
 
   it("filters due items", async () => {
@@ -233,5 +257,13 @@ describe("GET /api/vocabulary list", () => {
 
     expect(response.status).toBe(400)
     expect(data.error).toContain("Invalid filter")
+  })
+
+  it("returns 400 for invalid review filter", async () => {
+    const response = await GET(new Request("http://localhost/api/vocabulary?review=invalid"))
+    const data = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(data.error).toContain("Invalid review")
   })
 })

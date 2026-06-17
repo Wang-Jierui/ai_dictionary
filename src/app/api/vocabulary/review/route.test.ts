@@ -18,6 +18,7 @@ const mockEntry = {
   briefDefinition: "a round fruit",
   chineseDefinition: "苹果",
   notes: null,
+  reviewEnabled: true,
   reviewEaseFactor: 2.5,
   reviewIntervalDays: 0,
   reviewRepetitionCount: 0,
@@ -67,6 +68,7 @@ describe("POST /api/vocabulary/review", () => {
       briefDefinition: "a round fruit",
       chineseDefinition: "苹果",
       notes: null,
+      reviewEnabled: true,
       review: {
         easeFactor: 2.5,
         intervalDays: 1,
@@ -148,6 +150,23 @@ describe("POST /api/vocabulary/review", () => {
 
     expect(response.status).toBe(404)
     expect(data.error).toContain("not found")
+  })
+
+  it("rejects entries that are not enabled for review", async () => {
+    vi.mocked(prisma.vocabulary.findUnique).mockResolvedValue({ ...mockEntry, reviewEnabled: false } as never)
+
+    const response = await POST(
+      new Request("http://localhost/api/vocabulary/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: "vocab-1", grade: 4 }),
+      }),
+    )
+    const data = await response.json()
+
+    expect(response.status).toBe(409)
+    expect(data.error).toContain("not enabled")
+    expect(prisma.vocabulary.update).not.toHaveBeenCalled()
   })
 
   it("returns 400 for malformed JSON body", async () => {

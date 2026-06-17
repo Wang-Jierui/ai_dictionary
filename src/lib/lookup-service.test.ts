@@ -16,7 +16,7 @@ describe("saveVocabularyLookup", () => {
     vi.clearAllMocks()
   })
 
-  it("initializes SM-2 review defaults on create", async () => {
+  it("creates lookup rows as library-only with SM-2 defaults preserved", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: false })
     vi.setSystemTime(new Date("2026-06-17T12:00:00.000Z"))
     vi.mocked(prisma.vocabulary.upsert).mockResolvedValue({} as never)
@@ -34,7 +34,8 @@ describe("saveVocabularyLookup", () => {
     const args = vi.mocked(prisma.vocabulary.upsert).mock.calls[0][0]
     expect(args.create).toMatchObject({
       word: "apple",
-      reviewDueAt: new Date("2026-06-17T12:00:00.000Z"),
+      reviewEnabled: false,
+      reviewDueAt: null,
       reviewLastReviewedAt: null,
       reviewRepetitionCount: 0,
       reviewIntervalDays: 0,
@@ -42,6 +43,7 @@ describe("saveVocabularyLookup", () => {
       reviewLapses: 0,
     })
     expect(args.update).not.toHaveProperty("reviewDueAt")
+    expect(args.update).not.toHaveProperty("reviewEnabled")
     expect(args.update).not.toHaveProperty("reviewRepetitionCount")
     expect(args.update).not.toHaveProperty("reviewEaseFactor")
 

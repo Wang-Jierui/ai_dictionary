@@ -39,6 +39,7 @@ model Vocabulary {
   aiData              Json?
   imageData           String?
   imageMode           String?
+  reviewEnabled       Boolean   @default(false)
   reviewEaseFactor    Float     @default(2.5)
   reviewIntervalDays  Int       @default(0)
   reviewRepetitionCount Int     @default(0)
@@ -47,8 +48,31 @@ model Vocabulary {
   reviewLastReviewedAt DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+  reviewPlans         ReviewPlanWord[]
 
   @@index([createdAt])
+}
+
+model ReviewPlan {
+  id        String           @id @default(cuid())
+  name      String
+  isDefault Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  words     ReviewPlanWord[]
+}
+
+model ReviewPlanWord {
+  reviewPlanId String
+  vocabularyId String
+  createdAt    DateTime @default(now())
+
+  reviewPlan ReviewPlan @relation(fields: [reviewPlanId], references: [id], onDelete: Cascade)
+  vocabulary Vocabulary @relation(fields: [vocabularyId], references: [id], onDelete: Cascade)
+
+  @@id([reviewPlanId, vocabularyId])
+  @@index([vocabularyId])
+  @@index([reviewPlanId, createdAt])
 }
 
 model RoleplaySession {

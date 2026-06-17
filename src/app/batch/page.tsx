@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useCallback, useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -17,6 +17,8 @@ interface BatchLookupResult {
   aiData: AIWordData | null
   error?: string
   code?: string
+  reviewEnrolled?: boolean
+  reviewEnrollError?: string
 }
 
 type LookupQueueItem = Pick<BatchLookupResult, "index" | "word">
@@ -36,11 +38,23 @@ export default function BatchPage() {
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<BatchLookupResult[]>([])
   const [error, setError] = useState("")
+  const [reviewImport, setReviewImport] = useState(false)
+  const [reviewImportPlanId, setReviewImportPlanId] = useState("default")
+  const [reviewImportMessage, setReviewImportMessage] = useState("")
+  const [reviewEnrolling, setReviewEnrolling] = useState(false)
   const [maxWords, setMaxWords] = useState(50)
   const [concurrency, setConcurrency] = useState(3)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const isReviewImport = params.get("reviewImport") === "1"
+    const words = params.get("words")
+    const planId = params.get("planId")?.trim()
+    setReviewImport(isReviewImport)
+    if (planId) setReviewImportPlanId(planId)
+    if (words) setInputText(words)
+
     fetch("/api/settings")
       .then(res => res.json())
       .then(data => {
@@ -49,6 +63,60 @@ export default function BatchPage() {
       })
       .catch(() => undefined)
   }, [])
+
+  const enrollSuccessfulResults = useCallback(async (lookupResults: BatchLookupResult[]) => {
+    const successfulWords = lookupResults
+      .filter(result => result.status === "success" || result.status === "cached")
+      .map(result => result.word)
+
+    if (successfulWords.length === 0) return
+
+    setReviewEnrolling(true)
+    setReviewImportMessage("")
+
+    try {
+      const ids: string[] = []
+      const failedWords: string[] = []
+
+      for (const word of successfulWords) {
+        const res = await fetch(`/api/vocabulary?word=${encodeURIComponent(word)}`)
+        if (res.ok) {
+          const entry = (await res.json()) as { id?: string }
+          if (entry.id) ids.push(entry.id)
+          else failedWords.push(word)
+        } else {
+          failedWords.push(word)
+        }
+      }
+
+      if (ids.length > 0) {
+        const res = await fetch("/api/vocabulary", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids, reviewEnabled: true, planId: reviewImportPlanId }),
+        })
+        if (!res.ok) throw new Error("加入复习计划失败")
+
+        setResults(prev => prev.map(result => (
+          successfulWords.includes(result.word)
+            ? { ...result, reviewEnrolled: !failedWords.includes(result.word), reviewEnrollError: failedWords.includes(result.word) ? "加入失败" : undefined }
+            : result
+        )))
+      }
+
+      setReviewImportMessage(failedWords.length > 0
+        ? `已将 ${ids.length} 个词加入复习计划，${failedWords.length} 个词加入失败。`
+        : `已将 ${ids.length} 个词加入复习计划。`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "加入复习计划失败"
+      setReviewImportMessage(message)
+      setResults(prev => prev.map(result => (
+        successfulWords.includes(result.word) ? { ...result, reviewEnrollError: message } : result
+      )))
+    } finally {
+      setReviewEnrolling(false)
+    }
+  }, [reviewImportPlanId])
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -158,6 +226,7 @@ export default function BatchPage() {
   const handleBatchLookup = async () => {
     setError("")
     setResults([])
+    setReviewImportMessage("")
     
     // Parse words: split by newline, comma, or space, then filter empty and duplicates
     const rawWords = inputText.split(/[\n,\s]+/).map(w => w.trim()).filter(Boolean)
@@ -202,10 +271,22 @@ export default function BatchPage() {
   const totalCount = results.length
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
 
+  useEffect(() => {
+    if (!reviewImport || loading || results.length === 0) return
+    const complete = results.every(result => result.status !== "pending" && result.status !== "requesting")
+    const hasUnenrolledSuccess = results.some(result => (result.status === "success" || result.status === "cached") && !result.reviewEnrolled && !result.reviewEnrollError)
+    if (complete && hasUnenrolledSuccess && !reviewEnrolling) {
+      void enrollSuccessfulResults(results)
+    }
+  }, [enrollSuccessfulResults, loading, results, reviewEnrolling, reviewImport])
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">批量查词</h1>
+        <div>
+          <h1 className="text-2xl font-bold">{reviewImport ? "导入复习词" : "批量查词"}</h1>
+          {reviewImport && <p className="text-sm text-muted-foreground">成功查询的词会先进入生词库，再自动加入当前复习计划。</p>}
+        </div>
       </div>
 
       <Card>
@@ -218,6 +299,7 @@ export default function BatchPage() {
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
             支持每行一个单词，或使用逗号、空格分隔。自动忽略空行和重复项。当前最多 {maxWords} 个词，并发 {concurrency} 个请求。
+            {reviewImport ? " 本次导入会自动加入复习计划。" : ""}
           </p>
           
           <Textarea
@@ -257,7 +339,7 @@ export default function BatchPage() {
               ) : (
                 <>
                   <Play className="h-4 w-4 mr-2" />
-                  开始批量查询
+                  {reviewImport ? "导入并加入复习" : "开始批量查询"}
                 </>
               )}
             </Button>
@@ -267,6 +349,13 @@ export default function BatchPage() {
             <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
               <AlertTriangle className="h-4 w-4" />
               {error}
+            </div>
+          )}
+
+          {reviewImportMessage && (
+            <div className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">
+              {reviewEnrolling ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4 text-primary" />}
+              {reviewImportMessage}
             </div>
           )}
         </CardContent>
@@ -366,6 +455,11 @@ export default function BatchPage() {
                             已缓存
                           </Badge>
                         )}
+                        {result.reviewEnrolled && (
+                          <Badge className="h-5 border-blue-200 bg-blue-50 px-1.5 text-[10px] text-blue-700 hover:bg-blue-100">
+                            已加入复习
+                          </Badge>
+                        )}
                         {result.status === "requesting" && (
                           <Badge className="text-[10px] h-5 px-1.5 bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100">
                             请求中
@@ -385,6 +479,8 @@ export default function BatchPage() {
                         </p>
                       ) : result.status === "requesting" ? (
                         <p className="text-sm text-amber-600 mt-1">正在查询...</p>
+                      ) : result.reviewEnrollError ? (
+                        <p className="mt-1 text-sm text-red-600">{result.reviewEnrollError}</p>
                       ) : result.status === "pending" ? (
                         <p className="text-sm text-slate-500 mt-1">等待查询</p>
                       ) : (

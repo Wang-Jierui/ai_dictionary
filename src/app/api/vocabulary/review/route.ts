@@ -39,6 +39,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Vocabulary entry not found" }, { status: 404 })
   }
 
+  if (!entry.reviewEnabled) {
+    return NextResponse.json({ error: "Vocabulary entry is not enabled for review" }, { status: 409 })
+  }
+
   const current: VocabularyReviewState = {
     easeFactor: entry.reviewEaseFactor,
     intervalDays: entry.reviewIntervalDays,
@@ -67,6 +71,7 @@ export async function POST(request: Request) {
       briefDefinition: true,
       chineseDefinition: true,
       notes: true,
+      reviewEnabled: true,
       reviewEaseFactor: true,
       reviewIntervalDays: true,
       reviewRepetitionCount: true,
@@ -95,6 +100,7 @@ function toCompactRow(entry: {
   briefDefinition: string
   chineseDefinition: string | null
   notes: string | null
+  reviewEnabled: boolean
   reviewEaseFactor: number
   reviewIntervalDays: number
   reviewRepetitionCount: number
@@ -119,6 +125,7 @@ function toCompactRow(entry: {
     briefDefinition: entry.briefDefinition,
     chineseDefinition: entry.chineseDefinition,
     notes: entry.notes,
+    reviewEnabled: entry.reviewEnabled,
     review,
     createdAt: entry.createdAt.toISOString(),
   }
