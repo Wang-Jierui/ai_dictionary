@@ -1,8 +1,9 @@
 import { generateText, streamText } from "ai"
 import { buildLookupPrompt, getModelForTask } from "@/lib/ai"
-import { parseLookupResponse } from "@/lib/ai-parser"
+import { parseLookupResponseStrict } from "@/lib/ai-parser"
 import { lookupWord } from "@/lib/dictionary-api"
 import { prisma } from "@/lib/prisma"
+import { SM2_DEFAULT_EASE_FACTOR, SM2_DEFAULT_INTERVAL_DAYS, SM2_DEFAULT_REPETITION_COUNT } from "@/lib/sm2"
 import type { Prisma } from "@/generated/prisma/client"
 import type { AIWordData, DictionaryEntry } from "@/types/dictionary"
 
@@ -10,6 +11,9 @@ type CachedLookup = {
   cached: true
   dictData: DictionaryEntry | null
   aiData: AIWordData
+  imageData: string | null
+  imageMode: string | null
+  notes: string | null
 }
 
 type LookupSettings = {
@@ -42,6 +46,7 @@ export type BatchLookupFailure = {
   dictData: DictionaryEntry | null
   aiData: null
   error: string
+  code?: string
 }
 
 export type BatchLookupResult = BatchLookupSuccess | BatchLookupFailure
@@ -64,6 +69,9 @@ export async function findCachedLookup(word: string): Promise<CachedLookup | nul
     cached: true,
     dictData: cached.dictData ? (cached.dictData as unknown as DictionaryEntry) : null,
     aiData: cached.aiData as unknown as AIWordData,
+    imageData: cached.imageData,
+    imageMode: cached.imageMode,
+    notes: cached.notes,
   }
 }
 
@@ -109,7 +117,7 @@ export async function generateAiLookup(word: string, settings: LookupSettings): 
     prompt: buildLookupPrompt(word, settings.interests, settings.customPrompt),
   })
 
-  return parseLookupResponse(text)
+  return parseLookupResponseStrict(text)
 }
 
 function firstBriefDefinition(dictData: DictionaryEntry | null) {
@@ -127,6 +135,7 @@ function toJsonInput(value: DictionaryEntry | AIWordData): Prisma.InputJsonValue
 export async function saveVocabularyLookup(word: string, dictData: DictionaryEntry | null, aiData: AIWordData) {
   const dictJson = dictData ? toJsonInput(dictData) : undefined
   const aiJson = toJsonInput(aiData)
+  const now = new Date()
 
   return prisma.vocabulary.upsert({
     where: { word },
@@ -144,6 +153,12 @@ export async function saveVocabularyLookup(word: string, dictData: DictionaryEnt
       chineseDefinition: aiData.chineseDefinition,
       dictData: dictJson,
       aiData: aiJson,
+      reviewDueAt: now,
+      reviewLastReviewedAt: null,
+      reviewRepetitionCount: SM2_DEFAULT_REPETITION_COUNT,
+      reviewIntervalDays: SM2_DEFAULT_INTERVAL_DAYS,
+      reviewEaseFactor: SM2_DEFAULT_EASE_FACTOR,
+      reviewLapses: 0,
     },
   })
 }

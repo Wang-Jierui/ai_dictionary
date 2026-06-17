@@ -1,0 +1,10 @@
+-- AlterTable
+ALTER TABLE "Settings" ADD COLUMN "sectionOrder" JSONB NOT NULL DEFAULT '[]';
+
+-- AlterTable
+ALTER TABLE "Vocabulary" ADD COLUMN "reviewEaseFactor" DOUBLE PRECISION NOT NULL DEFAULT 2.5,
+ADD COLUMN "reviewIntervalDays" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "reviewRepetitionCount" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "reviewLapses" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "reviewDueAt" TIMESTAMP(3),
+ADD COLUMN "reviewLastReviewedAt" TIMESTAMP(3);

@@ -1,12 +1,14 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback, type PointerEvent as ReactPointerEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Save, Plus, Trash2, Loader2, LogIn, LogOut, UserPlus, Shield, KeyRound } from "lucide-react"
+import { Save, Plus, Trash2, Loader2, LogIn, LogOut, UserPlus, Shield, KeyRound, ArrowUp, ArrowDown, RotateCcw, GripVertical } from "lucide-react"
+import { AISectionId } from "@/lib/constants"
+import { DEFAULT_SECTION_ORDER, sanitizeSectionOrder } from "@/lib/section-order"
 import type { AIEndpointConfig, AITask } from "@/types/dictionary"
 
 const ALL_TASKS: { value: AITask; label: string }[] = [
@@ -21,6 +23,21 @@ const INTEREST_PRESETS = [
   "科幻", "篮球", "编程", "美妆", "游戏", "音乐", "电影",
   "美食", "旅行", "历史", "科技", "动漫", "文学", "商业",
 ]
+
+const SECTION_LABELS: Record<AISectionId, string> = {
+  coreImage: "核心意象",
+  senseMap: "多义词图谱",
+  collocations: "地道搭配",
+  synonymBoundaries: "近义词边界",
+  commonMistakes: "易错点",
+  personalizedExamples: "定制例句",
+  nuanceAnalysis: "语境辨析",
+  etymologyStory: "词源故事",
+  mnemonicHook: "记忆锚点",
+  multiHookMemory: "混合记忆",
+  activeRecall: "主动回想",
+  practiceTask: "实战演练",
+}
 
 function clampInteger(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback
@@ -39,8 +56,16 @@ export default function SettingsPage() {
   const [batchMaxWords, setBatchMaxWords] = useState(50)
   const [batchConcurrency, setBatchConcurrency] = useState(3)
   const [endpoints, setEndpoints] = useState<AIEndpointConfig[]>([])
+  const [sectionOrder, setSectionOrder] = useState<AISectionId[]>([])
+  const [draggingSection, setDraggingSection] = useState<AISectionId | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const sectionListRef = useRef<HTMLDivElement | null>(null)
+  const sectionRowRefs = useRef<Map<AISectionId, HTMLDivElement>>(new Map())
+  const sectionOrderRef = useRef<AISectionId[]>([])
+  const pointerDragSectionRef = useRef<AISectionId | null>(null)
+  const activePointerIdRef = useRef<number | null>(null)
+  const dragTargetRef = useRef<AISectionId | null>(null)
 
   const [currentUser, setCurrentUser] = useState<string | null>(null)
   const [authUsername, setAuthUsername] = useState("")
@@ -70,9 +95,16 @@ export default function SettingsPage() {
         ? JSON.parse(settingsData.aiEndpoints || "[]")
         : settingsData.aiEndpoints ?? []
       setEndpoints(eps)
+      const nextSectionOrder = sanitizeSectionOrder(settingsData.sectionOrder)
+      sectionOrderRef.current = nextSectionOrder
+      setSectionOrder(nextSectionOrder)
       setLoading(false)
     })
   }, [])
+
+  useEffect(() => {
+    sectionOrderRef.current = sectionOrder
+  }, [sectionOrder])
 
   const reloadEndpoints = async () => {
     const res = await fetch("/api/settings")
@@ -130,6 +162,7 @@ export default function SettingsPage() {
         batchMaxWords: safeBatchMaxWords,
         batchConcurrency: safeBatchConcurrency,
         aiEndpoints: endpoints,
+        sectionOrder,
       }),
     })
     setSaving(false)
@@ -185,6 +218,134 @@ export default function SettingsPage() {
         return { ...ep, tasks }
       })
     )
+  }
+
+  const moveSection = (index: number, direction: "up" | "down") => {
+    const newOrder = [...sectionOrder]
+    const targetIndex = direction === "up" ? index - 1 : index + 1
+    if (targetIndex < 0 || targetIndex >= newOrder.length) return
+    const [moved] = newOrder.splice(index, 1)
+    newOrder.splice(targetIndex, 0, moved)
+    sectionOrderRef.current = newOrder
+    setSectionOrder(newOrder)
+  }
+
+  const moveSectionTo = useCallback((sourceId: AISectionId, targetId: AISectionId) => {
+    if (sourceId === targetId) return
+    const currentOrder = sectionOrderRef.current
+    const sourceIndex = currentOrder.indexOf(sourceId)
+    const targetIndex = currentOrder.indexOf(targetId)
+    if (sourceIndex < 0 || targetIndex < 0) return
+    const nextOrder = [...currentOrder]
+    const [moved] = nextOrder.splice(sourceIndex, 1)
+    nextOrder.splice(targetIndex, 0, moved)
+    sectionOrderRef.current = nextOrder
+    setSectionOrder(nextOrder)
+  }, [])
+
+  const dragOverSection = useCallback((targetId: AISectionId) => {
+    const sourceId = pointerDragSectionRef.current
+    if (!sourceId) return
+    if (sourceId === targetId) {
+      dragTargetRef.current = null
+      return
+    }
+    if (dragTargetRef.current === targetId) return
+    dragTargetRef.current = targetId
+    moveSectionTo(sourceId, targetId)
+  }, [moveSectionTo])
+
+  const getSectionAtPoint = useCallback((clientY: number) => {
+    const listRect = sectionListRef.current?.getBoundingClientRect()
+    if (!listRect || clientY < listRect.top || clientY > listRect.bottom) return null
+
+    let closestSection: { id: AISectionId; distance: number } | null = null
+    for (const id of sectionOrderRef.current) {
+      const row = sectionRowRefs.current.get(id)
+      if (!row) continue
+      const rect = row.getBoundingClientRect()
+      if (clientY >= rect.top && clientY <= rect.bottom) return id
+
+      const centerY = rect.top + rect.height / 2
+      const distance = Math.abs(clientY - centerY)
+      if (!closestSection || distance < closestSection.distance) {
+        closestSection = { id, distance }
+      }
+    }
+
+    return closestSection?.id ?? null
+  }, [])
+
+  const updateDragByPoint = useCallback((clientY: number) => {
+    const targetId = getSectionAtPoint(clientY)
+    if (targetId) dragOverSection(targetId)
+  }, [dragOverSection, getSectionAtPoint])
+
+  const finishSectionDrag = useCallback(() => {
+    activePointerIdRef.current = null
+    pointerDragSectionRef.current = null
+    dragTargetRef.current = null
+    setDraggingSection(null)
+  }, [])
+
+  const startSectionDrag = (event: ReactPointerEvent<HTMLButtonElement>, id: AISectionId) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return
+    event.preventDefault()
+    const dragHandle = event.currentTarget
+    if (dragHandle.setPointerCapture) {
+      dragHandle.setPointerCapture(event.pointerId)
+    }
+    activePointerIdRef.current = event.pointerId
+    pointerDragSectionRef.current = id
+    dragTargetRef.current = null
+    setDraggingSection(id)
+    updateDragByPoint(event.clientY)
+  }
+
+  const moveSectionDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (activePointerIdRef.current !== event.pointerId) return
+    event.preventDefault()
+    updateDragByPoint(event.clientY)
+  }
+
+  const finishSectionDragFromHandle = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (activePointerIdRef.current !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    finishSectionDrag()
+  }
+
+  const setSectionRowRef = (id: AISectionId) => (node: HTMLDivElement | null) => {
+    if (node) sectionRowRefs.current.set(id, node)
+    else sectionRowRefs.current.delete(id)
+  }
+
+  useEffect(() => {
+    if (!draggingSection) return
+    const trackDrag = (event: PointerEvent) => {
+      if (activePointerIdRef.current !== event.pointerId) return
+      if (event.cancelable) event.preventDefault()
+      updateDragByPoint(event.clientY)
+    }
+    const finishDrag = (event: PointerEvent) => {
+      if (activePointerIdRef.current !== event.pointerId) return
+      finishSectionDrag()
+    }
+    window.addEventListener("pointermove", trackDrag)
+    window.addEventListener("pointerup", finishDrag)
+    window.addEventListener("pointercancel", finishDrag)
+    return () => {
+      window.removeEventListener("pointermove", trackDrag)
+      window.removeEventListener("pointerup", finishDrag)
+      window.removeEventListener("pointercancel", finishDrag)
+    }
+  }, [draggingSection, finishSectionDrag, updateDragByPoint])
+
+  const resetSectionOrder = () => {
+    const defaultOrder = [...DEFAULT_SECTION_ORDER]
+    sectionOrderRef.current = defaultOrder
+    setSectionOrder(defaultOrder)
   }
 
   const loadAdminUsers = async (pwd?: string) => {
@@ -337,6 +498,76 @@ export default function SettingsPage() {
                 onChange={e => setBatchConcurrency(minInteger(e.currentTarget.valueAsNumber, 1, 3))}
               />
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">内容显示顺序</CardTitle>
+            <Button variant="outline" size="sm" onClick={resetSectionOrder}>
+              <RotateCcw className="h-4 w-4" />
+              恢复默认
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">调整 AI 详解各板块的显示顺序。调整后点击“保存”生效。</p>
+          <div
+            ref={sectionListRef}
+            className="grid gap-2"
+            onPointerUp={finishSectionDrag}
+            onPointerCancel={finishSectionDrag}
+          >
+            {sectionOrder.map((id, index) => (
+              <div
+                key={id}
+                ref={setSectionRowRef(id)}
+                className={`flex items-center justify-between rounded-lg border p-3 transition-all duration-200 ease-out ${
+                  draggingSection === id
+                    ? "scale-[1.01] border-primary bg-primary/5 shadow-md"
+                    : "bg-secondary/20 hover:bg-secondary/40"
+                }`}
+                onPointerEnter={() => dragOverSection(id)}
+                onPointerMove={() => dragOverSection(id)}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label={`拖动调整 ${SECTION_LABELS[id] || id} 的显示顺序`}
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground touch-none transition-colors duration-200 ${
+                      draggingSection === id
+                        ? "cursor-grabbing bg-primary text-primary-foreground"
+                        : "cursor-grab hover:bg-accent hover:text-accent-foreground active:cursor-grabbing"
+                    }`}
+                    onPointerDown={event => startSectionDrag(event, id)}
+                    onPointerMove={moveSectionDrag}
+                    onPointerUp={finishSectionDragFromHandle}
+                    onPointerCancel={finishSectionDragFromHandle}
+                  >
+                    <GripVertical className="h-4 w-4" />
+                  </button>
+                  <span className="truncate text-sm font-medium">{SECTION_LABELS[id] || id}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost" size="icon" className="h-8 w-8"
+                    disabled={index === 0}
+                    onClick={() => moveSection(index, "up")}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost" size="icon" className="h-8 w-8"
+                    disabled={index === sectionOrder.length - 1}
+                    onClick={() => moveSection(index, "down")}
+                  >
+                    <ArrowDown className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getCurrentUsername } from "@/lib/auth"
+import { sanitizeSectionOrder, DEFAULT_SECTION_ORDER } from "@/lib/section-order"
 
 function clampInteger(value: unknown, min: number, max: number, fallback: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback
@@ -38,7 +39,11 @@ export async function GET() {
         aiEndpoints: [],
       },
     })
-    return NextResponse.json({ ...created, aiEndpoints: [] })
+    return NextResponse.json({
+      ...created,
+      aiEndpoints: [],
+      sectionOrder: sanitizeSectionOrder(created.sectionOrder),
+    })
   }
 
   const username = await getCurrentUsername()
@@ -48,6 +53,7 @@ export async function GET() {
       return NextResponse.json({
         ...settings,
         aiEndpoints: normalizeAiEndpoints(userConfig.aiEndpoints),
+        sectionOrder: sanitizeSectionOrder(settings.sectionOrder),
       })
     }
   }
@@ -55,6 +61,7 @@ export async function GET() {
   return NextResponse.json({
     ...settings,
     aiEndpoints: normalizeAiEndpoints(settings.aiEndpoints),
+    sectionOrder: sanitizeSectionOrder(settings.sectionOrder),
   })
 }
 
@@ -63,6 +70,7 @@ export async function PUT(request: Request) {
   const batchMaxWords = clampInteger(body.batchMaxWords, 1, 1000, 50)
   const batchConcurrency = minInteger(body.batchConcurrency, 1, 3)
   const aiEndpoints = body.aiEndpoints === undefined ? undefined : normalizeAiEndpoints(body.aiEndpoints)
+  const sectionOrder = body.sectionOrder === undefined ? undefined : sanitizeSectionOrder(body.sectionOrder)
 
   const username = await getCurrentUsername()
   if (username && aiEndpoints !== undefined) {
@@ -79,6 +87,7 @@ export async function PUT(request: Request) {
       customPrompt: body.customPrompt,
       batchMaxWords,
       batchConcurrency,
+      ...(sectionOrder === undefined ? {} : { sectionOrder }),
       ...(username || aiEndpoints === undefined ? {} : { aiEndpoints }),
     },
     create: {
@@ -88,6 +97,7 @@ export async function PUT(request: Request) {
       batchMaxWords,
       batchConcurrency,
       aiEndpoints: aiEndpoints ?? [],
+      sectionOrder: sectionOrder ?? DEFAULT_SECTION_ORDER,
     },
   })
 
@@ -103,5 +113,6 @@ export async function PUT(request: Request) {
     aiEndpoints: username
       ? normalizeAiEndpoints(aiEndpoints ?? userConfig?.aiEndpoints)
       : normalizeAiEndpoints(settings.aiEndpoints),
+    sectionOrder: sanitizeSectionOrder(settings.sectionOrder),
   })
 }

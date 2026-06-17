@@ -2,13 +2,17 @@
 
 import { useSearchParams } from "next/navigation"
 import { Suspense, useState, useRef, useEffect, useCallback } from "react"
-import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, History as HistoryIcon, BookOpen, Languages, Eye, Map as MapIcon, Link2, Split, AlertTriangle, Trash2 } from "lucide-react"
+import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, History as HistoryIcon, BookOpen, Languages, Trash2, Edit3, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Textarea } from "@/components/ui/textarea"
+import { AiLearningSection, WordImagePanel, type WordImageMode } from "@/components/ai-learning-sections"
+import { WordChatPanel } from "@/components/word-chat-panel"
+import type { AISectionId } from "@/lib/constants"
+import { DEFAULT_SECTION_ORDER, sanitizeSectionOrder } from "@/lib/section-order"
 import type { DictionaryEntry, AIWordData } from "@/types/dictionary"
-import { parseLookupResponse } from "@/lib/ai-parser"
 
 const HISTORY_KEY = "ai-dict-search-history"
 const MAX_HISTORY = 8
@@ -40,10 +44,25 @@ interface WordResult {
   word: string
   dictData: DictionaryEntry | null
   aiData: AIWordData | null
+  imageData: string | null
+  imageMode: WordImageMode | null
+  generatingImage: boolean
+  notes: string
   loadingDict: boolean
   loadingAI: boolean
   error: string
   fromCache: boolean
+}
+
+interface LookupResponse {
+  cached?: boolean
+  dictData?: DictionaryEntry | null
+  aiData?: AIWordData
+  imageData?: string | null
+  imageMode?: string | null
+  notes?: string | null
+  error?: string
+  code?: string
 }
 
 function HomeContent() {
@@ -53,6 +72,10 @@ function HomeContent() {
   const [results, setResults] = useState<Map<string, WordResult>>(new Map<string, WordResult>())
   const [activeWord, setActiveWord] = useState<string>("")
   const [history, setHistory] = useState<string[]>(() => getHistory())
+  const [editingNotes, setEditingNotes] = useState(false)
+  const [notesValue, setNotesValue] = useState("")
+  const [savingNotes, setSavingNotes] = useState(false)
+  const [sectionOrder, setSectionOrder] = useState<AISectionId[]>(DEFAULT_SECTION_ORDER)
   const inputRef = useRef<HTMLInputElement>(null)
   const initialized = useRef(false)
   
@@ -63,6 +86,21 @@ function HomeContent() {
   const loadingAI = activeResult?.loadingAI ?? false
   const error = activeResult?.error ?? ""
   const fromCache = activeResult?.fromCache ?? false
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then(res => res.json())
+      .then(data => setSectionOrder(sanitizeSectionOrder(data.sectionOrder)))
+      .catch(() => setSectionOrder([...DEFAULT_SECTION_ORDER]))
+  }, [])
+
+  useEffect(() => {
+    if (!editingNotes) setNotesValue(activeResult?.notes ?? "")
+  }, [activeResult?.notes, activeWord, editingNotes])
+
+  useEffect(() => {
+    setEditingNotes(false)
+  }, [activeWord])
 
   const updateResult = useCallback((word: string, patch: Partial<WordResult>) => {
     setResults(prev => {
@@ -100,6 +138,8 @@ function HomeContent() {
     const initial: WordResult = {
       word: trimmed,
       dictData: null, aiData: null,
+      imageData: null, imageMode: null, generatingImage: false,
+      notes: "",
       loadingDict: true, loadingAI: true,
       error: "", fromCache: false,
     }
@@ -108,47 +148,48 @@ function HomeContent() {
     let fetchedDict: DictionaryEntry | null = null
     let fetchedAi: AIWordData | null = null
     let isCached = false
+    let aiParseError = false
 
     const aiPromise = fetch("/api/ai/lookup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ word: trimmed, forceRefresh: options?.forceRefresh === true }),
     }).then(async res => {
-      if (!res.ok) { updateResult(trimmed, { loadingAI: false }); return }
-
-      const contentType = res.headers.get("content-type") ?? ""
-      if (contentType.includes("application/json")) {
-        const data = await res.json()
-        if (data.cached) {
-          isCached = true
-          const patch: Partial<WordResult> = { fromCache: true, aiData: data.aiData as AIWordData, loadingAI: false }
-          if (data.dictData) {
-            fetchedDict = data.dictData as DictionaryEntry
-            patch.dictData = fetchedDict
-            patch.loadingDict = false
-          }
-          updateResult(trimmed, patch)
-          return
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as LookupResponse
+        if (data.code === "PARSE_ERROR") {
+          aiParseError = true
         }
+        const message = data.code === "PARSE_ERROR"
+          ? "AI 返回的单词数据格式不正确，无法解析。请稍后重试。"
+          : data.error || "AI 查询失败"
+        updateResult(trimmed, { error: message, loadingAI: false })
+        return
       }
 
-      const reader = res.body?.getReader()
-      if (!reader) { updateResult(trimmed, { loadingAI: false }); return }
-
-      const decoder = new TextDecoder()
-      let accumulated = ""
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        accumulated += decoder.decode(value, { stream: true })
+      const data = await res.json() as LookupResponse
+      if (data.cached) {
+        isCached = true
+        const imageMode = data.imageMode === "mood" || data.imageMode === "meme" ? data.imageMode : null
+        const patch: Partial<WordResult> = {
+          fromCache: true,
+          aiData: data.aiData ?? null,
+          imageData: data.imageData ?? null,
+          imageMode,
+          notes: data.notes ?? "",
+          loadingAI: false,
+        }
+        if (data.dictData) {
+          fetchedDict = data.dictData
+          patch.dictData = fetchedDict
+          patch.loadingDict = false
+        }
+        updateResult(trimmed, patch)
+        return
       }
 
-      try {
-        fetchedAi = parseLookupResponse(accumulated)
-      } catch {
-        fetchedAi = { chineseDefinition: accumulated.trim(), personalizedExamples: [], nuanceAnalysis: "", etymologyStory: "", mnemonicHook: "" }
-      }
-      updateResult(trimmed, { aiData: fetchedAi, loadingAI: false })
+      if (data.aiData) fetchedAi = data.aiData
+      updateResult(trimmed, { aiData: fetchedAi, notes: data.notes ?? "", loadingAI: false })
     }).catch(() => updateResult(trimmed, { loadingAI: false }))
 
     const dictPromise = fetch(`/api/dictionary?word=${encodeURIComponent(trimmed)}`)
@@ -161,7 +202,11 @@ function HomeContent() {
         updateResult(trimmed, { dictData: data, loadingDict: false })
       })
       .catch(err => {
-        updateResult(trimmed, { error: isCached ? "" : err.message, loadingDict: false })
+        const patch: Partial<WordResult> = { loadingDict: false }
+        if (!aiParseError && !isCached) {
+          patch.error = err.message
+        }
+        updateResult(trimmed, patch)
       })
 
     await Promise.all([dictPromise, aiPromise])
@@ -202,6 +247,60 @@ function HomeContent() {
   const retryCurrentWord = () => {
     if (!activeWord || loadingDict || loadingAI) return
     searchWord(activeWord, { forceRefresh: true })
+  }
+
+  const saveNotes = async () => {
+    if (!activeResult || savingNotes) return
+    setSavingNotes(true)
+    try {
+      await fetch("/api/vocabulary/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          word: activeResult.word,
+          notes: notesValue,
+          briefDefinition: activeResult.dictData?.meanings[0]?.definitions[0]?.definition ?? "",
+        }),
+      })
+      updateResult(activeResult.word, { notes: notesValue })
+      setEditingNotes(false)
+    } finally {
+      setSavingNotes(false)
+    }
+  }
+
+  const generateWordImage = async (word: string, mode: WordImageMode) => {
+    const result = results.get(word)
+    if (!result || result.generatingImage) return
+
+    updateResult(word, { generatingImage: true })
+    try {
+      const meaning = result.dictData?.meanings[0]?.definitions[0]?.definition ?? result.aiData?.chineseDefinition ?? ""
+      const res = await fetch("/api/ai/image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ word, meaning, mode }),
+      })
+      if (!res.ok) return
+
+      const data = (await res.json()) as { base64?: string; url?: string }
+      const imageData = data.base64 ? `data:image/png;base64,${data.base64}` : data.url
+      if (!imageData) return
+
+      updateResult(word, { imageData, imageMode: mode })
+      await fetch("/api/vocabulary/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          word,
+          imageData: data.base64 ?? data.url,
+          imageMode: mode,
+          briefDefinition: result.dictData?.meanings[0]?.definitions[0]?.definition ?? "",
+        }),
+      })
+    } finally {
+      updateResult(word, { generatingImage: false })
+    }
   }
 
   const clearAll = () => {
@@ -407,150 +506,51 @@ function HomeContent() {
 
       {aiData && (
         <div className="space-y-4">
-          {aiData.coreImage && (
-            <Card className="bg-primary/5 border-primary/20">
-              <CardContent className="pt-6 flex items-start gap-3">
-                <Eye className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                <div>
-                  <h4 className="font-semibold text-primary mb-1">核心意象</h4>
-                  <p className="text-sm leading-relaxed">{aiData.coreImage}</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {sectionOrder.map(sectionId => (
+            <AiLearningSection key={sectionId} sectionId={sectionId} aiData={aiData} word={activeWord} />
+          ))}
 
-          {aiData.senseMap && aiData.senseMap.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
+          <WordImagePanel
+            word={activeWord}
+            imageData={activeResult?.imageData ?? null}
+            imageMode={activeResult?.imageMode ?? null}
+            generatingImage={activeResult?.generatingImage ?? false}
+            onGenerate={generateWordImage}
+          />
+
+          {dictData && <WordChatPanel word={activeWord} dictData={dictData} aiData={aiData} />}
+
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between gap-3">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <MapIcon className="h-4 w-4 text-indigo-500" />
-                  词义图谱
+                  <Edit3 className="h-4 w-4 text-slate-500" />
+                  个人笔记
                 </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {aiData.senseMap.map((sense, i) => (
-                    <div key={i} className="bg-muted/50 p-3 rounded-md border">
-                      <div className="font-medium text-sm mb-1">{sense.meaning}</div>
-                      <div className="text-xs text-muted-foreground">{sense.usage}</div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {aiData.collocations && aiData.collocations.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Link2 className="h-4 w-4 text-orange-500" />
-                  地道搭配
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-2">
-                  {aiData.collocations.map((col, i) => (
-                    <Badge key={i} className="px-3 py-1.5 text-sm font-normal">
-                      {col}
-                    </Badge>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {aiData.synonymBoundaries && aiData.synonymBoundaries.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Split className="h-4 w-4 text-teal-500" />
-                  近义词边界
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {aiData.synonymBoundaries.map((syn, i) => (
-                    <div key={i} className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
-                      <Badge className="w-fit shrink-0 bg-teal-50/50 text-teal-700 border-teal-200">
-                        vs {syn.synonym}
-                      </Badge>
-                      <p className="text-sm leading-relaxed text-muted-foreground">{syn.difference}</p>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {aiData.commonMistakes && aiData.commonMistakes.length > 0 && (
-            <Card className="border-red-200 bg-red-50/30">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base text-red-700">
-                  <AlertTriangle className="h-4 w-4" />
-                  常见误区
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2">
-                  {aiData.commonMistakes.map((mistake, i) => (
-                    <li key={i} className="text-sm leading-relaxed text-red-800/90 flex items-start gap-2">
-                      <span className="text-red-500 mt-0.5">•</span>
-                      {mistake}
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
-
-          {aiData.personalizedExamples && aiData.personalizedExamples.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Sparkles className="h-4 w-4 text-amber-500" />
-                  兴趣定制例句
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2">
-                  {aiData.personalizedExamples.map((ex, i) => (
-                    <li key={i} className="text-sm leading-relaxed pl-4 border-l-2 border-amber-200">
-                      {ex}
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
-
-          {aiData.nuanceAnalysis && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <BookOpen className="h-4 w-4 text-blue-500" />
-                  母语级语感辨析
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">{aiData.nuanceAnalysis}</p>
-              </CardContent>
-            </Card>
-          )}
-
-          {aiData.etymologyStory && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <HistoryIcon className="h-4 w-4 text-emerald-500" />
-                  词源微故事
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">{aiData.etymologyStory}</p>
-              </CardContent>
-            </Card>
-          )}
+                {!editingNotes ? (
+                  <Button variant="ghost" size="sm" onClick={() => setEditingNotes(true)}>
+                    <Edit3 className="h-3.5 w-3.5" />
+                    编辑
+                  </Button>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => { setEditingNotes(false); setNotesValue(activeResult?.notes ?? "") }} disabled={savingNotes}>取消</Button>
+                    <Button size="sm" onClick={saveNotes} disabled={savingNotes}>
+                      {savingNotes ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      保存
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {editingNotes ? (
+                <Textarea value={notesValue} onChange={event => setNotesValue(event.target.value)} placeholder="在这里记录你的学习心得、例句 or 联想..." className="min-h-24" autoFocus />
+              ) : (
+                <div className="min-h-10 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{activeResult?.notes || "暂无笔记，点击编辑添加。"}</div>
+              )}
+            </CardContent>
+          </Card>
 
         </div>
       )}

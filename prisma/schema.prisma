@@ -12,6 +12,7 @@ model Settings {
   interests        String[] @default([])
   customPrompt     String   @default("")
   aiEndpoints      Json     @default("[]")
+  sectionOrder     Json     @default("[]")
   batchMaxWords    Int      @default(50)
   batchConcurrency Int      @default(3)
   createdAt        DateTime @default(now())
@@ -28,18 +29,24 @@ model SearchHistory {
 }
 
 model Vocabulary {
-  id                String   @id @default(cuid())
-  word              String   @unique
-  phonetic          String?
-  briefDefinition   String
-  chineseDefinition String?
-  notes             String?
-  dictData          Json?
-  aiData            Json?
-  imageData         String?
-  imageMode         String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                  String    @id @default(cuid())
+  word                String    @unique
+  phonetic            String?
+  briefDefinition     String
+  chineseDefinition   String?
+  notes               String?
+  dictData            Json?
+  aiData              Json?
+  imageData           String?
+  imageMode           String?
+  reviewEaseFactor    Float     @default(2.5)
+  reviewIntervalDays  Int       @default(0)
+  reviewRepetitionCount Int     @default(0)
+  reviewLapses        Int       @default(0)
+  reviewDueAt         DateTime?
+  reviewLastReviewedAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([createdAt])
 }

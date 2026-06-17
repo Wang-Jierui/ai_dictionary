@@ -44,4 +44,14 @@ next-env.d.ts
 
 # local agent runtime state
 /.omo/run-continuation/
+/.omo/boulder.json
+/.omo/evidence/
+/.omo/notepads/
+/.omo/plans/
 /.playwright-mcp/
+
+# local browser QA screenshots
+/blank-page-check.png
+/lookup-*.png
+/settings-*.png
+/vocabulary-*.png

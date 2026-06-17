@@ -17,6 +17,16 @@ export const aiWordSchema = z.object({
   practiceTask: z.string().optional(),
 })
 
+export class LookupParseError extends Error {
+  readonly rawText: string
+
+  constructor(message: string, rawText: string) {
+    super(message)
+    this.name = "LookupParseError"
+    this.rawText = rawText
+  }
+}
+
 function toStringValue(value: unknown) {
   if (typeof value === "string") return value
   if (typeof value === "number" || typeof value === "boolean") return String(value)
@@ -71,6 +81,27 @@ function toActiveRecall(value: unknown) {
   return { question, answer }
 }
 
+function isCodeShapedText(text: string) {
+  const trimmed = text.trim()
+  if (!trimmed) return false
+
+  if (trimmed.includes("```")) return true
+
+  const codePrefixes = [
+    "const ", "let ", "var ", "function ", "class ", "export ", "import ",
+    "return ", "if (", "for (", "while (", "switch (", "try {", "catch (",
+    "=> ", "=>{", "//", "/*",
+  ]
+
+  const lower = trimmed.toLowerCase()
+  if (codePrefixes.some(prefix => lower.startsWith(prefix))) return true
+
+  // Reject raw JSON-shaped objects or arrays masquerading as explanation text.
+  if (/^\{[\s\S]*\}$/.test(trimmed) || /^\[[\s\S]*\]$/.test(trimmed)) return true
+
+  return false
+}
+
 function hasMeaningfulLookupContent(data: AIWordData) {
   return Boolean(
     data.chineseDefinition.trim() ||
@@ -119,6 +150,21 @@ export function coerceAiWordData(value: unknown): AIWordData | null {
   if (multiHookMemory.length > 0) normalized.multiHookMemory = multiHookMemory
   if (activeRecall) normalized.activeRecall = activeRecall
   if (practiceTask) normalized.practiceTask = practiceTask
+
+  // Strict parser requires a primary explanation. Malformed or missing definitions
+  // must not fall back to raw text.
+  if (!normalized.chineseDefinition) return null
+
+  const explanationFields = [
+    normalized.chineseDefinition,
+    normalized.nuanceAnalysis,
+    normalized.etymologyStory,
+    normalized.mnemonicHook,
+    coreImage,
+    practiceTask,
+  ]
+
+  if (explanationFields.some(field => field && isCodeShapedText(field))) return null
 
   if (!hasMeaningfulLookupContent(normalized)) return null
 
@@ -190,6 +236,25 @@ export function tryParseLookupJson(text: string) {
   return null
 }
 
+/**
+ * Strict lookup parser. Returns valid {@link AIWordData} or throws
+ * {@link LookupParseError} with the raw response attached.
+ *
+ * Use this for fresh lookups ( Tasks 5 and 9 ) so malformed AI output is
+ * rejected instead of being stored as raw text.
+ */
+export function parseLookupResponseStrict(text: string): AIWordData {
+  const parsed = tryParseLookupJson(text)
+  if (parsed) return parsed
+
+  throw new LookupParseError("Lookup response could not be parsed as valid AI word data", text)
+}
+
+/**
+ * @deprecated Prefer {@link parseLookupResponseStrict} for fresh lookups.
+ * This legacy wrapper keeps the old raw-text fallback in `chineseDefinition`
+ * for existing callers that have not yet been migrated.
+ */
 export function parseLookupResponse(text: string): AIWordData {
   const parsed = tryParseLookupJson(text)
   if (parsed) return parsed

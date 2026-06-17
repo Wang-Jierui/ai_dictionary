@@ -20,8 +20,8 @@ export function Nav() {
 
   return (
     <nav className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-sm">
-      <div className="mx-auto flex h-14 max-w-4xl items-center gap-1 px-4 overflow-x-auto">
-        <Link href="/" className="mr-4 shrink-0 text-lg font-bold tracking-tight">
+      <div className="mx-auto flex h-14 max-w-4xl items-center gap-0 overflow-x-auto px-2 sm:gap-1 sm:px-4">
+        <Link href="/" className="mr-2 shrink-0 text-base font-bold tracking-tight sm:mr-4 sm:text-lg">
           AI 词典
         </Link>
         {navItems.map(({ href, label, icon: Icon }) => {
@@ -31,7 +31,7 @@ export function Nav() {
               key={href}
               href={href}
               className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors",
+                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm transition-colors sm:px-3",
                 active
                   ? "bg-accent text-accent-foreground font-medium"
                   : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"

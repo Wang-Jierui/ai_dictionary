@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { LookupParseError } from "@/lib/ai-parser"
 import {
   clampLookupConcurrency,
   getLookupSettings,
@@ -158,14 +159,27 @@ async function lookupUniqueWord(item: UniqueWordLookup, settings: Awaited<Return
       dictData: result.dictData,
       aiData: result.aiData,
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof LookupParseError) {
+      return {
+        word: item.word,
+        status: "error",
+        cached: false,
+        dictData: null,
+        aiData: null,
+        error: "Lookup response could not be parsed as valid word data",
+        code: "PARSE_ERROR",
+      }
+    }
+
+    const message = error instanceof Error ? error.message : "Lookup failed"
     return {
       word: item.word,
       status: "error",
       cached: false,
       dictData: null,
       aiData: null,
-      error: "Lookup failed",
+      error: message,
     }
   }
 }

@@ -34,7 +34,7 @@ export interface AIWordData {
   etymologyStory: string
   mnemonicHook: string
   chineseDefinition: string
-  
+
   // Richer structured learning-card fields
   coreImage?: string
   senseMap?: { meaning: string; usage: string }[]
@@ -44,6 +44,16 @@ export interface AIWordData {
   multiHookMemory?: string[]
   activeRecall?: { question: string; answer: string }
   practiceTask?: string
+}
+
+// JSON-safe SM-2 review state for a vocabulary entry.
+export interface VocabularyReviewState {
+  easeFactor: number
+  intervalDays: number
+  repetitionCount: number
+  lapses: number
+  dueAt: string | null
+  lastReviewedAt: string | null
 }
 
 // Combined word result
@@ -59,6 +69,7 @@ export interface UserSettings {
   customPrompt: string
   aiEndpoints: AIEndpointConfig[]
   activeEndpointId: string
+  sectionOrder: string[]
 }
 
 export interface AIEndpointConfig {
@@ -90,6 +101,7 @@ export interface VocabularyEntry {
   aiData?: AIWordData | null
   imageData?: string | null
   imageMode?: "mood" | "meme" | null
+  review?: VocabularyReviewState | null
   createdAt: Date
 }
 

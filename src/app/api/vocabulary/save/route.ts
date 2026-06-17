@@ -8,6 +8,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing word" }, { status: 400 })
   }
 
+  const now = new Date()
+
   const entry = await prisma.vocabulary.upsert({
     where: { word: word.toLowerCase() },
     update: {
@@ -30,6 +32,12 @@ export async function POST(request: Request) {
       aiData: aiData ?? undefined,
       imageData: imageData ?? undefined,
       imageMode: imageMode ?? undefined,
+      reviewDueAt: now,
+      reviewLastReviewedAt: null,
+      reviewRepetitionCount: 0,
+      reviewIntervalDays: 0,
+      reviewEaseFactor: 2.5,
+      reviewLapses: 0,
     },
   })
 

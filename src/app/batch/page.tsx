@@ -16,6 +16,7 @@ interface BatchLookupResult {
   dictData: DictionaryEntry | null
   aiData: AIWordData | null
   error?: string
+  code?: string
 }
 
 type LookupQueueItem = Pick<BatchLookupResult, "index" | "word">
@@ -377,7 +378,11 @@ export default function BatchPage() {
                         )}
                       </div>
                       {result.status === "error" ? (
-                        <p className="text-sm text-red-600 mt-1">{result.error}</p>
+                        <p className="text-sm text-red-600 mt-1">
+                          {result.code === "PARSE_ERROR"
+                            ? "AI 返回的单词数据格式不正确，无法解析。"
+                            : result.error}
+                        </p>
                       ) : result.status === "requesting" ? (
                         <p className="text-sm text-amber-600 mt-1">正在查询...</p>
                       ) : result.status === "pending" ? (

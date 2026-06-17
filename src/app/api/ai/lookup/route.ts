@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server"
-import { findCachedLookup, getLookupSettings, normalizeLookupWord, recordSearchHistory, streamAiLookup } from "@/lib/lookup-service"
+import { LookupParseError } from "@/lib/ai-parser"
+import { fetchDictionaryEntry, findCachedLookup, generateAiLookup, getLookupSettings, normalizeLookupWord, recordSearchHistory, saveVocabularyLookup } from "@/lib/lookup-service"
 
 export async function POST(request: Request) {
-  const { word, forceRefresh } = await request.json()
+  let body: unknown
 
-  if (!word || typeof word !== "string") {
-    return new Response("Missing word", { status: 400 })
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: "Malformed JSON body" }, { status: 400 })
   }
 
+  if (!body || typeof body !== "object" || !("word" in body) || typeof body.word !== "string") {
+    return NextResponse.json({ error: "Missing word" }, { status: 400 })
+  }
+
+  const { word, forceRefresh } = body as { word: string; forceRefresh?: unknown }
   const wordLower = normalizeLookupWord(word)
 
   const cached = forceRefresh ? null : await findCachedLookup(wordLower)
@@ -17,12 +25,41 @@ export async function POST(request: Request) {
       cached: true,
       dictData: cached.dictData,
       aiData: cached.aiData,
+      imageData: cached.imageData,
+      imageMode: cached.imageMode,
+      notes: cached.notes,
     })
   }
 
   await recordSearchHistory([wordLower])
 
   const settings = await getLookupSettings()
-  const result = await streamAiLookup(word, settings)
-  return result.toTextStreamResponse()
+
+  try {
+    const [dictData, aiData] = await Promise.all([
+      fetchDictionaryEntry(wordLower),
+      generateAiLookup(wordLower, settings),
+    ])
+
+    const saved = await saveVocabularyLookup(wordLower, dictData, aiData)
+
+    return NextResponse.json({
+      cached: false,
+      dictData,
+      aiData,
+      imageData: saved.imageData,
+      imageMode: saved.imageMode,
+      notes: saved.notes,
+    })
+  } catch (error) {
+    if (error instanceof LookupParseError) {
+      return NextResponse.json(
+        { error: "Lookup response could not be parsed as valid word data", code: "PARSE_ERROR" },
+        { status: 422 },
+      )
+    }
+
+    const message = error instanceof Error ? error.message : "Lookup failed"
+    return NextResponse.json({ error: message }, { status: 502 })
+  }
 }
