@@ -55,7 +55,12 @@ const FILTER_LABELS: Record<LibraryFilterId, string> = {
   library: "仅收藏",
 }
 
-const SELECT_CONTROL_CLASS = "h-9 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-8 text-sm shadow-sm transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:w-36"
+const SELECT_CONTROL_CLASS = "h-9 min-w-0 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-8 text-sm shadow-sm transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:w-36"
+const LONG_PRESS_MS = 500
+const LONG_PRESS_MOVE_TOLERANCE = 8
+const DRAG_SELECT_MOVE_THRESHOLD = 6
+const AUTO_SCROLL_EDGE_PX = 72
+const AUTO_SCROLL_MAX_SPEED = 18
 
 type VocabularyWireEntry = Omit<Partial<VocabularyEntry>, "createdAt" | "imageMode"> & {
   createdAt?: string | Date
@@ -84,8 +89,23 @@ type DragSelectionState = {
   startX: number
   startY: number
   startId: string
+  lastTargetId: string
+  baseSelectedIds: Set<string>
+  rangeIds: Set<string>
   shouldSelect: boolean
   dragging: boolean
+}
+
+type LongPressState = {
+  pointerId: number
+  startX: number
+  startY: number
+  timerId: number
+}
+
+type CapturedPointerState = {
+  pointerId: number
+  element: HTMLDivElement
 }
 
 export default function VocabularyPage() {
@@ -111,9 +131,15 @@ export default function VocabularyPage() {
   const [planDialogIds, setPlanDialogIds] = useState<string[]>([])
   const [planDialogSelection, setPlanDialogSelection] = useState<Set<string>>(() => new Set())
   const [bulkAction, setBulkAction] = useState<BulkAction>(null)
+  const [selectionMode, setSelectionMode] = useState(false)
   const [draggingSelection, setDraggingSelection] = useState(false)
   const detailRequestId = useRef(0)
+  const listScrollRef = useRef<HTMLDivElement>(null)
   const dragSelectionRef = useRef<DragSelectionState | null>(null)
+  const longPressRef = useRef<LongPressState | null>(null)
+  const capturedPointerRef = useRef<CapturedPointerState | null>(null)
+  const autoScrollFrameRef = useRef<number | null>(null)
+  const latestPointerPointRef = useRef<{ clientX: number; clientY: number } | null>(null)
   const suppressNextRowClickRef = useRef(false)
 
   const currentIndex = useMemo(
@@ -176,19 +202,49 @@ export default function VocabularyPage() {
     })
   }, [words])
 
-  useEffect(() => {
-    const endDrag = () => {
-      dragSelectionRef.current = null
-      setDraggingSelection(false)
-    }
+  const cancelLongPress = useCallback(() => {
+    const longPress = longPressRef.current
+    if (longPress) window.clearTimeout(longPress.timerId)
+    longPressRef.current = null
+  }, [])
 
-    window.addEventListener("pointerup", endDrag)
-    window.addEventListener("pointercancel", endDrag)
-    return () => {
-      window.removeEventListener("pointerup", endDrag)
-      window.removeEventListener("pointercancel", endDrag)
+  const stopAutoScroll = useCallback(() => {
+    if (autoScrollFrameRef.current !== null) window.cancelAnimationFrame(autoScrollFrameRef.current)
+    autoScrollFrameRef.current = null
+    latestPointerPointRef.current = null
+  }, [])
+
+  const releaseCapturedPointer = useCallback(() => {
+    const capture = capturedPointerRef.current
+    capturedPointerRef.current = null
+    if (!capture) return
+
+    try {
+      if (capture.element.hasPointerCapture(capture.pointerId)) {
+        capture.element.releasePointerCapture(capture.pointerId)
+      }
+    } catch (releaseError) {
+      void releaseError
     }
   }, [])
+
+  const endDragSelection = useCallback(() => {
+    cancelLongPress()
+    dragSelectionRef.current = null
+    releaseCapturedPointer()
+    stopAutoScroll()
+    setDraggingSelection(false)
+  }, [cancelLongPress, releaseCapturedPointer, stopAutoScroll])
+
+  useEffect(() => {
+    window.addEventListener("pointerup", endDragSelection)
+    window.addEventListener("pointercancel", endDragSelection)
+    return () => {
+      window.removeEventListener("pointerup", endDragSelection)
+      window.removeEventListener("pointercancel", endDragSelection)
+      endDragSelection()
+    }
+  }, [endDragSelection])
 
   const fetchReviewPlans = useCallback(async () => {
     const res = await fetch("/api/review-plans")
@@ -265,16 +321,6 @@ export default function VocabularyPage() {
     await deleteWords([id])
   }
 
-  const setSelectionForId = useCallback((id: string, shouldSelect: boolean) => {
-    setSelectedIds(prev => {
-      if (prev.has(id) === shouldSelect) return prev
-      const next = new Set(prev)
-      if (shouldSelect) next.add(id)
-      else next.delete(id)
-      return next
-    })
-  }, [])
-
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev)
@@ -290,6 +336,11 @@ export default function VocabularyPage() {
 
   const clearSelection = () => {
     setSelectedIds(new Set())
+  }
+
+  const toggleSelectionMode = () => {
+    endDragSelection()
+    setSelectionMode(prev => !prev)
   }
 
   const goToStory = () => {
@@ -398,15 +449,143 @@ export default function VocabularyPage() {
     }
   }
 
+  const getDragRangeIds = useCallback((startId: string, targetId: string) => {
+    const startIndex = words.findIndex(entry => entry.id === startId)
+    const targetIndex = words.findIndex(entry => entry.id === targetId)
+    if (startIndex === -1 || targetIndex === -1) return new Set([startId])
+
+    const from = Math.min(startIndex, targetIndex)
+    const to = Math.max(startIndex, targetIndex)
+    return new Set(words.slice(from, to + 1).map(entry => entry.id))
+  }, [words])
+
+  const applyDragSelection = useCallback((targetId: string) => {
+    const drag = dragSelectionRef.current
+    if (!drag) return
+    drag.lastTargetId = targetId
+
+    const rangeIds = getDragRangeIds(drag.startId, targetId)
+    if (haveSameIds(drag.rangeIds, rangeIds)) return
+    drag.rangeIds = rangeIds
+
+    setSelectedIds(prev => {
+      const next = new Set(drag.baseSelectedIds)
+      for (const id of rangeIds) {
+        if (drag.shouldSelect) next.add(id)
+        else next.delete(id)
+      }
+      return haveSameIds(prev, next) ? prev : next
+    })
+  }, [getDragRangeIds])
+
+  const getRowIdFromPoint = useCallback((clientX: number, clientY: number) => {
+    const element = document.elementFromPoint(clientX, clientY)
+    const row = element instanceof HTMLElement ? element.closest<HTMLElement>("[data-vocabulary-row-id]") : null
+    return row?.dataset.vocabularyRowId ?? null
+  }, [])
+
+  const updateAutoScroll = useCallback((clientX: number, clientY: number) => {
+    latestPointerPointRef.current = { clientX, clientY }
+    if (autoScrollFrameRef.current !== null) return
+
+    const step = () => {
+      const drag = dragSelectionRef.current
+      const latestPointerPoint = latestPointerPointRef.current
+      if (!drag?.dragging || latestPointerPoint === null) {
+        autoScrollFrameRef.current = null
+        return
+      }
+
+      const container = listScrollRef.current
+      const containerCanScroll = Boolean(container && container.scrollHeight > container.clientHeight + 1)
+      const edgeTop = containerCanScroll ? container?.getBoundingClientRect().top ?? 0 : 0
+      const edgeBottom = containerCanScroll ? container?.getBoundingClientRect().bottom ?? window.innerHeight : window.innerHeight
+      const topDistance = latestPointerPoint.clientY - edgeTop
+      const bottomDistance = edgeBottom - latestPointerPoint.clientY
+      let velocity = 0
+
+      if (topDistance < AUTO_SCROLL_EDGE_PX) {
+        const pressure = 1 - Math.max(0, Math.min(AUTO_SCROLL_EDGE_PX, topDistance)) / AUTO_SCROLL_EDGE_PX
+        velocity = -AUTO_SCROLL_MAX_SPEED * pressure
+      } else if (bottomDistance < AUTO_SCROLL_EDGE_PX) {
+        const pressure = 1 - Math.max(0, Math.min(AUTO_SCROLL_EDGE_PX, bottomDistance)) / AUTO_SCROLL_EDGE_PX
+        velocity = AUTO_SCROLL_MAX_SPEED * pressure
+      }
+
+      if (velocity !== 0) {
+        if (containerCanScroll && container) container.scrollBy({ top: velocity })
+        else window.scrollBy({ top: velocity })
+      }
+
+      const targetId = getRowIdFromPoint(latestPointerPoint.clientX, latestPointerPoint.clientY)
+      if (targetId) applyDragSelection(targetId)
+
+      autoScrollFrameRef.current = window.requestAnimationFrame(step)
+    }
+
+    autoScrollFrameRef.current = window.requestAnimationFrame(step)
+  }, [applyDragSelection, getRowIdFromPoint])
+
+  const captureRowPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    releaseCapturedPointer()
+    const row = event.currentTarget
+    if (!row.setPointerCapture) return
+
+    try {
+      row.setPointerCapture(event.pointerId)
+      capturedPointerRef.current = { pointerId: event.pointerId, element: row }
+    } catch (captureError) {
+      void captureError
+      capturedPointerRef.current = null
+    }
+  }
+
   const beginRowPointer = (event: ReactPointerEvent<HTMLDivElement>, id: string) => {
     if (event.button !== 0) return
     const target = event.target
     if (target instanceof HTMLElement && target.closest("button, input, select, textarea, a")) return
+    cancelLongPress()
+    captureRowPointer(event)
+
+    if (!selectionMode) {
+      const startX = event.clientX
+      const startY = event.clientY
+      const pointerId = event.pointerId
+      longPressRef.current = {
+        pointerId,
+        startX,
+        startY,
+        timerId: window.setTimeout(() => {
+          longPressRef.current = null
+          setSelectionMode(true)
+          suppressNextRowClickRef.current = true
+          dragSelectionRef.current = {
+            pointerId,
+            startX,
+            startY,
+            startId: id,
+            lastTargetId: id,
+            baseSelectedIds: new Set(selectedIds),
+            rangeIds: new Set(),
+            shouldSelect: !selectedIds.has(id),
+            dragging: true,
+          }
+          setDraggingSelection(true)
+          applyDragSelection(id)
+          updateAutoScroll(startX, startY)
+        }, LONG_PRESS_MS),
+      }
+      return
+    }
+
     dragSelectionRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       startId: id,
+      lastTargetId: id,
+      baseSelectedIds: new Set(selectedIds),
+      rangeIds: new Set(),
       shouldSelect: !selectedIds.has(id),
       dragging: false,
     }
@@ -418,19 +597,31 @@ export default function VocabularyPage() {
     drag.dragging = true
     suppressNextRowClickRef.current = true
     setDraggingSelection(true)
-    setSelectionForId(drag.startId, drag.shouldSelect)
-    setSelectionForId(id, drag.shouldSelect)
+    applyDragSelection(id)
   }
 
-  const moveRowPointer = (event: ReactPointerEvent<HTMLDivElement>, id: string) => {
+  const moveRowPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const longPress = longPressRef.current
+    if (longPress?.pointerId === event.pointerId) {
+      const distance = Math.hypot(event.clientX - longPress.startX, event.clientY - longPress.startY)
+      if (distance > LONG_PRESS_MOVE_TOLERANCE) cancelLongPress()
+    }
+
     const drag = dragSelectionRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
+    const targetId = getRowIdFromPoint(event.clientX, event.clientY) ?? drag.lastTargetId
     if (drag.dragging) {
-      setSelectionForId(id, drag.shouldSelect)
+      event.preventDefault()
+      applyDragSelection(targetId)
+      updateAutoScroll(event.clientX, event.clientY)
       return
     }
     const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY)
-    if (distance > 6) activateDragSelection(id)
+    if (distance > DRAG_SELECT_MOVE_THRESHOLD) {
+      event.preventDefault()
+      activateDragSelection(targetId)
+      updateAutoScroll(event.clientX, event.clientY)
+    }
   }
 
   const enterRowWhileDragging = (event: ReactPointerEvent<HTMLDivElement>, id: string) => {
@@ -442,6 +633,10 @@ export default function VocabularyPage() {
   const openRowDetail = (id: string) => {
     if (suppressNextRowClickRef.current) {
       suppressNextRowClickRef.current = false
+      return
+    }
+    if (selectionMode) {
+      toggleSelect(id)
       return
     }
     void loadDetail(id)
@@ -724,22 +919,22 @@ export default function VocabularyPage() {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索生词、释义或笔记..." className="pl-9" />
         </div>
-        <div className="flex flex-wrap gap-2">
-          <label className="relative flex w-full items-center sm:w-auto">
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 sm:flex sm:shrink-0 sm:flex-wrap">
+          <label className="relative flex min-w-0 items-center sm:w-auto">
             <Filter className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
             <select aria-label="筛选生词" value={filter} onChange={event => setFilter(event.target.value as LibraryFilterId)} className={SELECT_CONTROL_CLASS}>
               {LIBRARY_FILTER_IDS.map(id => <option key={id} value={id}>{FILTER_LABELS[id]}</option>)}
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
           </label>
-          <label className="relative flex w-full items-center sm:w-auto">
+          <label className="relative flex min-w-0 items-center sm:w-auto">
             <SortAsc className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
             <select aria-label="排序生词" value={sort} onChange={event => setSort(event.target.value as VocabularySortId)} className={SELECT_CONTROL_CLASS}>
               {VOCABULARY_SORT_IDS.map(id => <option key={id} value={id}>{SORT_LABELS[id]}</option>)}
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
           </label>
-          <Button variant="outline" size="icon" onClick={() => setOrder(prev => (prev === "asc" ? "desc" : "asc"))} title={order === "asc" ? "升序" : "降序"}>
+          <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setOrder(prev => (prev === "asc" ? "desc" : "asc"))} title={order === "asc" ? "升序" : "降序"}>
             {order === "asc" ? <SortAsc className="h-4 w-4" /> : <SortDesc className="h-4 w-4" />}
           </Button>
         </div>
@@ -778,10 +973,11 @@ export default function VocabularyPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[minmax(20rem,0.85fr)_minmax(0,1.15fr)] md:gap-6 xl:grid-cols-[minmax(22rem,0.9fr)_minmax(0,1.1fr)]">
-          <div className="flex min-w-0 flex-col gap-2 pr-1 md:sticky md:top-20 md:min-h-0 md:max-h-[calc(100vh-6rem)] md:overflow-y-auto">
+          <div ref={listScrollRef} className="flex min-w-0 flex-col gap-2 pr-1 md:sticky md:top-20 md:min-h-0 md:max-h-[calc(100vh-6rem)] md:overflow-y-auto">
             <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm text-muted-foreground">
-              <span>共 {words.length} 个单词 · 勾选或拖过行可快速选择</span>
+              <span>共 {words.length} 个单词 · {selectionMode ? "拖过行可批量选择" : "点选择或长按多选"}</span>
               <div className="flex gap-2">
+                <Button variant={selectionMode ? "outline" : "ghost"} size="sm" className="h-7 px-2" onClick={toggleSelectionMode}>{selectionMode ? "完成" : "选择"}</Button>
                 <Button variant="ghost" size="sm" className="h-7 px-2" onClick={selectAllVisible} disabled={allVisibleSelected}>全选</Button>
                 <Button variant="ghost" size="sm" className="h-7 px-2" onClick={clearSelection} disabled={selectedEntries.length === 0}>全不选</Button>
               </div>
@@ -790,15 +986,16 @@ export default function VocabularyPage() {
               return (
                 <div key={entry.id}>
                   <Card
-                    className={`cursor-pointer transition-colors ${draggingSelection ? "select-none" : ""} ${selectedIds.has(entry.id) ? "border-primary bg-primary/5" : ""} ${expandedId === entry.id ? "border-primary bg-primary/5 shadow-sm" : "hover:bg-muted/50"}`}
+                    data-vocabulary-row-id={entry.id}
+                    className={`cursor-pointer transition-colors ${selectionMode || draggingSelection ? "select-none touch-none" : "touch-pan-y"} ${selectedIds.has(entry.id) ? "border-primary bg-primary/5" : ""} ${expandedId === entry.id ? "border-primary bg-primary/5 shadow-sm" : "hover:bg-muted/50"}`}
                     onPointerDown={event => beginRowPointer(event, entry.id)}
-                    onPointerMove={event => moveRowPointer(event, entry.id)}
+                    onPointerMove={moveRowPointer}
                     onPointerEnter={event => enterRowWhileDragging(event, entry.id)}
                     onClick={() => openRowDetail(entry.id)}
                   >
                     <CardContent className="flex items-center justify-between gap-3 px-4 py-3">
                       <div className="flex min-w-0 flex-1 items-center gap-3">
-                        <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={() => toggleSelect(entry.id)} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()} className="h-4 w-4 rounded" />
+                        <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={() => toggleSelect(entry.id)} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()} className={`h-4 w-4 rounded transition-opacity ${selectionMode || selectedIds.has(entry.id) ? "opacity-100" : "pointer-events-none opacity-0"}`} aria-label={`选择 ${entry.word}`} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2"><span className="truncate font-medium">{entry.word}</span></div>
                           <p className="line-clamp-1 text-sm text-muted-foreground">{entry.chineseDefinition || entry.briefDefinition}</p>
@@ -926,4 +1123,12 @@ function normalizeReview(entry: VocabularyWireEntry, fallback: VocabularyReviewS
 function toIsoString(value: string | Date | null | undefined) {
   if (!value) return null
   return value instanceof Date ? value.toISOString() : value
+}
+
+function haveSameIds(left: Set<string>, right: Set<string>) {
+  if (left.size !== right.size) return false
+  for (const id of left) {
+    if (!right.has(id)) return false
+  }
+  return true
 }

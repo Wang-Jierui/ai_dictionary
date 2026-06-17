@@ -8,4 +8,7 @@
 - Environments: .env
 
 ✓ Starting...
-✓ Ready in 775ms
+✓ Ready in 578ms
+ GET /vocabulary 200 in 2.3s (compile: 1700ms, render: 573ms)
+ GET /api/settings 200 in 654ms (compile: 203ms, render: 451ms)
+ GET /api/vocabulary?sort=created&order=desc&search=&randomSeed=2026-06-17 200 in 368ms (compile: 58ms, render: 310ms)
