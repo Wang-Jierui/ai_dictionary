@@ -8,7 +8,23 @@
 - Environments: .env
 
 ✓ Starting...
-✓ Ready in 578ms
- GET /vocabulary 200 in 2.3s (compile: 1700ms, render: 573ms)
- GET /api/settings 200 in 654ms (compile: 203ms, render: 451ms)
- GET /api/vocabulary?sort=created&order=desc&search=&randomSeed=2026-06-17 200 in 368ms (compile: 58ms, render: 310ms)
+✓ Ready in 580ms
+ GET /review 200 in 2.0s (compile: 1660ms, render: 377ms)
+ GET /api/vocabulary?review=enabled&planId=default&filter=due&sort=due&order=asc 500 in 821ms (compile: 216ms, render: 605ms)
+ GET /api/review-plans 500 in 979ms (compile: 457ms, render: 522ms)
+ GET /api/settings 500 in 1135ms (compile: 535ms, render: 600ms)
+ GET /review 200 in 101ms (compile: 4ms, render: 97ms)
+ GET /api/review-plans 500 in 177ms (compile: 7ms, render: 170ms)
+ GET /api/settings 500 in 315ms (compile: 15ms, render: 300ms)
+ GET /api/vocabulary?review=enabled&planId=default&filter=due&sort=due&order=asc 500 in 477ms (compile: 24ms, render: 453ms)
+ GET /vocabulary 200 in 35ms (compile: 20ms, render: 14ms)
+ GET /api/settings 500 in 101ms (compile: 3ms, render: 98ms)
+ GET /api/settings 500 in 75ms (compile: 1512µs, render: 74ms)
+ GET /api/vocabulary?sort=created&order=desc&search=&randomSeed=2026-06-17 500 in 63ms (compile: 1636µs, render: 62ms)
+ GET /review 200 in 11ms (compile: 2ms, render: 9ms)
+ GET /api/review-plans 500 in 81ms (compile: 1822µs, render: 79ms)
+ GET /api/settings 500 in 144ms (compile: 1437µs, render: 143ms)
+ GET /api/vocabulary?review=enabled&planId=default&filter=due&sort=due&order=asc 500 in 196ms (compile: 1336µs, render: 195ms)
+ GET /api/review-plans 500 in 73ms (compile: 3ms, render: 71ms)
+ GET /api/settings 500 in 135ms (compile: 2ms, render: 132ms)
+ GET /api/vocabulary?review=enabled&planId=default&filter=due&sort=due&order=asc 500 in 204ms (compile: 5ms, render: 199ms)

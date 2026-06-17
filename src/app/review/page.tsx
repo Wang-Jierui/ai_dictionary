@@ -23,6 +23,7 @@ const REVIEW_MODES = ["due", "new", "learning", "mastered", "all"] as const
 type ReviewMode = (typeof REVIEW_MODES)[number]
 
 const DEFAULT_REVIEW_PLAN_ID = "default"
+const REVIEW_PLAN_STORAGE_KEY = "ai-dict-active-review-plan"
 
 const SHORTCUT_GRADES: Partial<Record<string, ReviewGradeValue>> = {
   "1": REVIEW_GRADES.again,
@@ -105,7 +106,7 @@ export default function ReviewPage() {
   const [importingWords, setImportingWords] = useState(false)
   const [importMessage, setImportMessage] = useState("")
   const [reviewPlans, setReviewPlans] = useState<ReviewPlan[]>([])
-  const [activePlanId, setActivePlanId] = useState(DEFAULT_REVIEW_PLAN_ID)
+  const [activePlanId, setActivePlanId] = useState(readStoredReviewPlanId)
   const [newPlanName, setNewPlanName] = useState("")
   const [creatingPlan, setCreatingPlan] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
@@ -174,6 +175,10 @@ export default function ReviewPage() {
     if (!data.some(plan => plan.id === activePlanId)) {
       setActivePlanId(data[0]?.id ?? DEFAULT_REVIEW_PLAN_ID)
     }
+  }, [activePlanId])
+
+  useEffect(() => {
+    rememberReviewPlanId(activePlanId)
   }, [activePlanId])
 
   useEffect(() => {
@@ -985,4 +990,22 @@ function normalizeReview(entry: VocabularyWireEntry, fallback: VocabularyReviewS
 function toIsoString(value: string | Date | null | undefined) {
   if (!value) return null
   return value instanceof Date ? value.toISOString() : value
+}
+
+function readStoredReviewPlanId() {
+  if (typeof window === "undefined") return DEFAULT_REVIEW_PLAN_ID
+  try {
+    return window.localStorage.getItem(REVIEW_PLAN_STORAGE_KEY) || DEFAULT_REVIEW_PLAN_ID
+  } catch (storageError) {
+    void storageError
+    return DEFAULT_REVIEW_PLAN_ID
+  }
+}
+
+function rememberReviewPlanId(planId: string) {
+  try {
+    window.localStorage.setItem(REVIEW_PLAN_STORAGE_KEY, planId)
+  } catch (storageError) {
+    void storageError
+  }
 }

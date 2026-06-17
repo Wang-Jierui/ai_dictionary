@@ -132,7 +132,6 @@ export default function VocabularyPage() {
   const [planDialogSelection, setPlanDialogSelection] = useState<Set<string>>(() => new Set())
   const [bulkAction, setBulkAction] = useState<BulkAction>(null)
   const [selectionMode, setSelectionMode] = useState(false)
-  const [draggingSelection, setDraggingSelection] = useState(false)
   const detailRequestId = useRef(0)
   const listScrollRef = useRef<HTMLDivElement>(null)
   const dragSelectionRef = useRef<DragSelectionState | null>(null)
@@ -233,7 +232,6 @@ export default function VocabularyPage() {
     dragSelectionRef.current = null
     releaseCapturedPointer()
     stopAutoScroll()
-    setDraggingSelection(false)
   }, [cancelLongPress, releaseCapturedPointer, stopAutoScroll])
 
   useEffect(() => {
@@ -340,7 +338,10 @@ export default function VocabularyPage() {
 
   const toggleSelectionMode = () => {
     endDragSelection()
-    setSelectionMode(prev => !prev)
+    setSelectionMode(prev => {
+      if (prev) clearSelection()
+      return !prev
+    })
   }
 
   const goToStory = () => {
@@ -570,7 +571,6 @@ export default function VocabularyPage() {
             shouldSelect: !selectedIds.has(id),
             dragging: true,
           }
-          setDraggingSelection(true)
           applyDragSelection(id)
           updateAutoScroll(startX, startY)
         }, LONG_PRESS_MS),
@@ -596,7 +596,6 @@ export default function VocabularyPage() {
     if (!drag) return
     drag.dragging = true
     suppressNextRowClickRef.current = true
-    setDraggingSelection(true)
     applyDragSelection(id)
   }
 
@@ -635,10 +634,7 @@ export default function VocabularyPage() {
       suppressNextRowClickRef.current = false
       return
     }
-    if (selectionMode) {
-      toggleSelect(id)
-      return
-    }
+    if (selectionMode) return
     void loadDetail(id)
   }
 
@@ -974,7 +970,7 @@ export default function VocabularyPage() {
       ) : (
         <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[minmax(20rem,0.85fr)_minmax(0,1.15fr)] md:gap-6 xl:grid-cols-[minmax(22rem,0.9fr)_minmax(0,1.1fr)]">
           <div ref={listScrollRef} className="flex min-w-0 flex-col gap-2 pr-1 md:sticky md:top-20 md:min-h-0 md:max-h-[calc(100vh-6rem)] md:overflow-y-auto">
-            <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm text-muted-foreground">
+            <div className="flex select-none flex-wrap items-center justify-between gap-2 px-1 text-sm text-muted-foreground">
               <span>共 {words.length} 个单词 · {selectionMode ? "拖过行可批量选择" : "点选择或长按多选"}</span>
               <div className="flex gap-2">
                 <Button variant={selectionMode ? "outline" : "ghost"} size="sm" className="h-7 px-2" onClick={toggleSelectionMode}>{selectionMode ? "完成" : "选择"}</Button>
@@ -987,15 +983,32 @@ export default function VocabularyPage() {
                 <div key={entry.id}>
                   <Card
                     data-vocabulary-row-id={entry.id}
-                    className={`cursor-pointer transition-colors ${selectionMode || draggingSelection ? "select-none touch-none" : "touch-pan-y"} ${selectedIds.has(entry.id) ? "border-primary bg-primary/5" : ""} ${expandedId === entry.id ? "border-primary bg-primary/5 shadow-sm" : "hover:bg-muted/50"}`}
-                    onPointerDown={event => beginRowPointer(event, entry.id)}
-                    onPointerMove={moveRowPointer}
-                    onPointerEnter={event => enterRowWhileDragging(event, entry.id)}
+                    className={`cursor-pointer select-none touch-pan-y transition-colors ${selectedIds.has(entry.id) ? "border-primary bg-primary/5" : ""} ${expandedId === entry.id ? "border-primary bg-primary/5 shadow-sm" : "hover:bg-muted/50"}`}
                     onClick={() => openRowDetail(entry.id)}
                   >
                     <CardContent className="flex items-center justify-between gap-3 px-4 py-3">
                       <div className="flex min-w-0 flex-1 items-center gap-3">
-                        <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={() => toggleSelect(entry.id)} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()} className={`h-4 w-4 rounded transition-opacity ${selectionMode || selectedIds.has(entry.id) ? "opacity-100" : "pointer-events-none opacity-0"}`} aria-label={`选择 ${entry.word}`} />
+                        <div
+                          className="-ml-2 flex h-11 w-10 shrink-0 touch-none select-none items-center justify-center rounded-md"
+                          aria-label={`选择 ${entry.word}`}
+                          role="button"
+                          tabIndex={0}
+                          onPointerDown={event => beginRowPointer(event, entry.id)}
+                          onPointerMove={moveRowPointer}
+                          onPointerEnter={event => enterRowWhileDragging(event, entry.id)}
+                          onClick={event => {
+                            event.stopPropagation()
+                            if (selectionMode || selectedIds.has(entry.id)) toggleSelect(entry.id)
+                          }}
+                          onKeyDown={event => {
+                            if (event.key !== " " && event.key !== "Enter") return
+                            event.preventDefault()
+                            event.stopPropagation()
+                            if (selectionMode || selectedIds.has(entry.id)) toggleSelect(entry.id)
+                          }}
+                        >
+                          <input type="checkbox" readOnly checked={selectedIds.has(entry.id)} className={`pointer-events-none h-4 w-4 rounded transition-opacity ${selectionMode || selectedIds.has(entry.id) ? "opacity-100" : "opacity-0"}`} aria-hidden="true" tabIndex={-1} />
+                        </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2"><span className="truncate font-medium">{entry.word}</span></div>
                           <p className="line-clamp-1 text-sm text-muted-foreground">{entry.chineseDefinition || entry.briefDefinition}</p>
