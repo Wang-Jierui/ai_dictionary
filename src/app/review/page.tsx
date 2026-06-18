@@ -1,13 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { BookOpen, CheckCircle2, ChevronDown, Loader2, RotateCcw, Search, Volume2, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
+import { BookOpen, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Edit3, Loader2, RotateCcw, Save, Search, Volume2, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AiLearningSection } from "@/components/ai-learning-sections"
+import { WordChatPanel } from "@/components/word-chat-panel"
 import { REVIEW_GRADES, type AISectionId, type ReviewGradeValue } from "@/lib/constants"
 import { DEFAULT_SECTION_ORDER, sanitizeSectionOrder } from "@/lib/section-order"
 import type { VocabularyEntry, VocabularyReviewState } from "@/types/dictionary"
@@ -24,6 +25,10 @@ type ReviewMode = (typeof REVIEW_MODES)[number]
 
 const DEFAULT_REVIEW_PLAN_ID = "default"
 const REVIEW_PLAN_STORAGE_KEY = "ai-dict-active-review-plan"
+const SWIPE_ACTIVATE_PX = 10
+const SWIPE_VERTICAL_CANCEL_PX = 8
+const SWIPE_THRESHOLD_PX = 80
+const SYSTEM_BACK_EDGE_EXCLUSION_PX = 32
 
 const SHORTCUT_GRADES: Partial<Record<string, ReviewGradeValue>> = {
   "1": REVIEW_GRADES.again,
@@ -76,6 +81,14 @@ type ReviewPlan = {
   wordCount: number
 }
 
+type SwipeState = {
+  pointerId: number
+  startX: number
+  startY: number
+  locked: boolean
+  cancelled: boolean
+}
+
 const EMPTY_COUNTS: GradeCounts = {
   [REVIEW_GRADES.again]: 0,
   [REVIEW_GRADES.hard]: 0,
@@ -95,10 +108,12 @@ export default function ReviewPage() {
   const [grading, setGrading] = useState(false)
   const [error, setError] = useState("")
   const [gradeCounts, setGradeCounts] = useState<GradeCounts>(EMPTY_COUNTS)
+  const [gradedSessionIndexes, setGradedSessionIndexes] = useState<Set<number>>(() => new Set())
   const [requeuedIds, setRequeuedIds] = useState<Set<string>>(() => new Set())
   const [feedback, setFeedback] = useState<ReviewFeedback | null>(null)
   const [managementOpen, setManagementOpen] = useState(false)
   const [managementWords, setManagementWords] = useState<VocabularyEntry[]>([])
+  const [managementSearchQuery, setManagementSearchQuery] = useState("")
   const [managementLoading, setManagementLoading] = useState(false)
   const [managementError, setManagementError] = useState("")
   const [removingIds, setRemovingIds] = useState<Set<string>>(() => new Set())
@@ -116,8 +131,16 @@ export default function ReviewPage() {
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryImporting, setLibraryImporting] = useState(false)
   const [libraryError, setLibraryError] = useState("")
+  const [reviewEditingNotes, setReviewEditingNotes] = useState(false)
+  const [reviewNotesValue, setReviewNotesValue] = useState("")
+  const [reviewSavingNotes, setReviewSavingNotes] = useState(false)
+  const [reviewSwipeOffset, setReviewSwipeOffset] = useState(0)
+  const [reviewSwipeTransition, setReviewSwipeTransition] = useState(false)
+  const detailRequestId = useRef(0)
+  const reviewSwipeRef = useRef<SwipeState | null>(null)
 
   const currentRow = queue[currentIndex]
+  const currentRowAlreadyGraded = currentRow ? gradedSessionIndexes.has(currentIndex) : false
   const completed = useMemo(
     () => Object.values(gradeCounts).reduce((sum, count) => sum + count, 0),
     [gradeCounts],
@@ -125,6 +148,13 @@ export default function ReviewPage() {
   const finished = queue.length > 0 && currentIndex >= queue.length
   const studyPlanStats = useMemo(() => calculateStudyPlanStats(managementWords), [managementWords])
   const activePlan = reviewPlans.find(plan => plan.id === activePlanId)
+  const filteredManagementWords = useMemo(() => {
+    const query = managementSearchQuery.trim().toLowerCase()
+    if (!query) return managementWords
+    return managementWords.filter(entry => [entry.word, entry.briefDefinition, entry.chineseDefinition, entry.notes]
+      .filter(Boolean)
+      .some(value => value?.toLowerCase().includes(query)))
+  }, [managementSearchQuery, managementWords])
   const filteredLibraryWords = useMemo(() => {
     const query = librarySearchQuery.trim().toLowerCase()
     if (!query) return libraryWords
@@ -144,6 +174,7 @@ export default function ReviewPage() {
     setCurrentDetail(null)
     setShowAnswer(false)
     setGradeCounts({ ...EMPTY_COUNTS })
+    setGradedSessionIndexes(new Set())
     setRequeuedIds(new Set())
     setFeedback(null)
 
@@ -215,23 +246,44 @@ export default function ReviewPage() {
   }, [fetchStudyPlan, managementOpen])
 
   useEffect(() => {
-    if (!currentRow || finished) return
+    const requestId = detailRequestId.current + 1
+    detailRequestId.current = requestId
+
+    if (!currentRow || finished) {
+      setLoadingDetail(false)
+      return
+    }
+
     setCurrentDetail(null)
     setShowAnswer(false)
+    setReviewNotesValue(currentRow.notes ?? "")
+    setReviewEditingNotes(false)
     setLoadingDetail(true)
     fetch(`/api/vocabulary?id=${encodeURIComponent(currentRow.id)}`)
       .then(res => {
         if (!res.ok) throw new Error("单词详情加载失败")
         return res.json() as Promise<VocabularyWireEntry>
       })
-      .then(data => setCurrentDetail(normalizeVocabularyEntry(data, currentRow)))
-      .catch(err => setError(err instanceof Error ? err.message : "单词详情加载失败"))
-      .finally(() => setLoadingDetail(false))
+      .then(data => {
+        if (detailRequestId.current !== requestId) return
+        const normalized = normalizeVocabularyEntry(data, currentRow)
+        setCurrentDetail(normalized)
+        setReviewNotesValue(normalized.notes ?? "")
+      })
+      .catch(err => {
+        if (detailRequestId.current === requestId) {
+          setError(err instanceof Error ? err.message : "单词详情加载失败")
+        }
+      })
+      .finally(() => {
+        if (detailRequestId.current === requestId) setLoadingDetail(false)
+      })
   }, [currentRow, finished])
 
   const submitReview = useCallback(async (grade: ReviewGradeValue) => {
-    if (!currentRow || grading || !showAnswer) return
+    if (!currentRow || grading || !showAnswer || gradedSessionIndexes.has(currentIndex)) return
     const reviewedRow = currentRow
+    const reviewedIndex = currentIndex
     const reviewButton = REVIEW_BUTTONS.find(button => button.grade === grade)
     setGrading(true)
     try {
@@ -243,6 +295,11 @@ export default function ReviewPage() {
       if (!res.ok) throw new Error("评分失败")
       const data = (await res.json()) as VocabularyWireEntry
       const updatedEntry = normalizeVocabularyEntry(data, reviewedRow)
+      setGradedSessionIndexes(prev => {
+        const next = new Set(prev)
+        next.add(reviewedIndex)
+        return next
+      })
       setGradeCounts(prev => ({ ...prev, [grade]: prev[grade] + 1 }))
       setQueue(prev => {
         const updatedQueue = prev.map(entry => entry.id === updatedEntry.id ? { ...entry, ...updatedEntry } : entry)
@@ -274,7 +331,7 @@ export default function ReviewPage() {
     } finally {
       setGrading(false)
     }
-  }, [currentRow, grading, requeuedIds, showAnswer])
+  }, [currentIndex, currentRow, gradedSessionIndexes, grading, requeuedIds, showAnswer])
 
   const skipCurrent = useCallback(() => {
     if (!currentRow) return
@@ -282,6 +339,99 @@ export default function ReviewPage() {
     setCurrentDetail(null)
     setShowAnswer(false)
   }, [currentRow])
+
+  const goToPreviousReview = useCallback(() => {
+    if (currentIndex <= 0) return
+    setCurrentIndex(index => Math.max(index - 1, 0))
+    setCurrentDetail(null)
+    setShowAnswer(false)
+  }, [currentIndex])
+
+  const saveReviewNotes = async () => {
+    const entry = currentDetail ?? currentRow
+    if (!entry || reviewSavingNotes) return
+    setReviewSavingNotes(true)
+    try {
+      const res = await fetch("/api/vocabulary/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          word: entry.word,
+          notes: reviewNotesValue,
+          briefDefinition: entry.briefDefinition,
+        }),
+      })
+      if (!res.ok) throw new Error("笔记保存失败")
+      setCurrentDetail(prev => prev?.id === entry.id ? { ...prev, notes: reviewNotesValue } : prev)
+      setQueue(prev => prev.map(row => row.id === entry.id ? { ...row, notes: reviewNotesValue } : row))
+      setManagementWords(prev => prev.map(row => row.id === entry.id ? { ...row, notes: reviewNotesValue } : row))
+      setReviewEditingNotes(false)
+      setError("")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "笔记保存失败，请稍后重试")
+    } finally {
+      setReviewSavingNotes(false)
+    }
+  }
+
+  const resetReviewSwipe = useCallback(() => {
+    setReviewSwipeTransition(true)
+    setReviewSwipeOffset(0)
+    reviewSwipeRef.current = null
+  }, [])
+
+  const beginReviewSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!currentRow || event.button !== 0) return
+    if (event.clientX <= SYSTEM_BACK_EDGE_EXCLUSION_PX) return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest("button, input, select, textarea, a, [contenteditable]:not([contenteditable='false'])")) return
+    reviewSwipeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      locked: false,
+      cancelled: false,
+    }
+    setReviewSwipeTransition(false)
+  }
+
+  const moveReviewSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const swipe = reviewSwipeRef.current
+    if (!swipe || swipe.pointerId !== event.pointerId || swipe.cancelled) return
+    const deltaX = event.clientX - swipe.startX
+    const deltaY = event.clientY - swipe.startY
+
+    if (!swipe.locked) {
+      if (Math.abs(deltaY) > SWIPE_VERTICAL_CANCEL_PX && Math.abs(deltaY) > Math.abs(deltaX)) {
+        swipe.cancelled = true
+        reviewSwipeRef.current = null
+        setReviewSwipeOffset(0)
+        return
+      }
+      if (Math.abs(deltaX) < SWIPE_ACTIVATE_PX || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) return
+      swipe.locked = true
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch (captureError) {
+        void captureError
+      }
+    }
+
+    event.preventDefault()
+    setReviewSwipeOffset(deltaX)
+  }
+
+  const endReviewSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const swipe = reviewSwipeRef.current
+    if (!swipe || swipe.pointerId !== event.pointerId) return
+    const deltaX = event.clientX - swipe.startX
+    const shouldNavigatePrevious = deltaX > SWIPE_THRESHOLD_PX && currentIndex > 0
+    const shouldNavigateNext = deltaX < -SWIPE_THRESHOLD_PX
+
+    resetReviewSwipe()
+    if (shouldNavigatePrevious) goToPreviousReview()
+    else if (shouldNavigateNext) skipCurrent()
+  }
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -299,6 +449,12 @@ export default function ReviewPage() {
         return
       }
 
+      if (event.key === "ArrowLeft") {
+        event.preventDefault()
+        goToPreviousReview()
+        return
+      }
+
       if (showAnswer) {
         const shortcutGrade = SHORTCUT_GRADES[event.key]
         if (shortcutGrade !== undefined) {
@@ -310,7 +466,7 @@ export default function ReviewPage() {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [currentRow, finished, loadingDetail, showAnswer, skipCurrent, submitReview])
+  }, [currentRow, finished, goToPreviousReview, loadingDetail, showAnswer, skipCurrent, submitReview])
 
   const removeFromStudyPlan = async (id: string) => {
     if (removingIds.has(id)) return
@@ -331,11 +487,21 @@ export default function ReviewPage() {
       await res.json() as VocabularyWireEntry[]
 
       const removedBeforeCurrent = queue.slice(0, currentIndex).filter(entry => entry.id === id).length
+      const removedIndexes = queue.flatMap((entry, index) => entry.id === id ? [index] : [])
       const nextQueueLength = queue.filter(entry => entry.id !== id).length
       const nextIndex = Math.min(Math.max(currentIndex - removedBeforeCurrent, 0), nextQueueLength)
 
       setManagementWords(prev => prev.filter(entry => entry.id !== id))
       setQueue(prev => prev.filter(entry => entry.id !== id))
+      setGradedSessionIndexes(prev => {
+        const next = new Set<number>()
+        prev.forEach(index => {
+          if (removedIndexes.includes(index)) return
+          const removedBeforeIndex = removedIndexes.filter(removedIndex => removedIndex < index).length
+          next.add(index - removedBeforeIndex)
+        })
+        return next
+      })
       setCurrentIndex(nextIndex)
       setRequeuedIds(prev => {
         const next = new Set(prev)
@@ -532,7 +698,7 @@ export default function ReviewPage() {
   const renderReviewButtons = (placement: "top" | "bottom") => (
     <div className={placement === "top" ? "grid grid-cols-2 gap-2 sm:grid-cols-4" : "grid w-full grid-cols-4 gap-2 sm:w-auto"}>
       {REVIEW_BUTTONS.map((button, index) => (
-        <Button key={`${placement}-${button.grade}`} variant="outline" className={`px-2 ${button.tone}`} disabled={grading} onClick={() => submitReview(button.grade)}>
+        <Button key={`${placement}-${button.grade}`} variant="outline" className={`px-2 ${button.tone}`} disabled={grading || currentRowAlreadyGraded} onClick={() => submitReview(button.grade)}>
           <span className="hidden font-mono sm:inline">{index + 1}</span>{button.label}
         </Button>
       ))}
@@ -653,9 +819,22 @@ export default function ReviewPage() {
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm font-medium">学习中词表</p>
-                <Badge className="border bg-background text-foreground">{managementWords.length} 个词</Badge>
+                <div className="flex flex-1 flex-col gap-2 sm:max-w-md sm:flex-row sm:items-center sm:justify-end">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={managementSearchQuery}
+                      onChange={event => setManagementSearchQuery(event.target.value)}
+                      placeholder="搜索单词、释义或笔记..."
+                      className="pl-9"
+                    />
+                  </div>
+                  <Badge className="justify-center border bg-background text-foreground">
+                    {managementSearchQuery.trim() ? `${filteredManagementWords.length} / ${managementWords.length}` : managementWords.length} 个词
+                  </Badge>
+                </div>
               </div>
               {managementLoading ? (
                 <div className="flex items-center justify-center rounded-lg border border-dashed py-8 text-sm text-muted-foreground">
@@ -663,9 +842,11 @@ export default function ReviewPage() {
                 </div>
               ) : managementWords.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无加入学习计划的词。</div>
+              ) : filteredManagementWords.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">没有匹配的复习词。</div>
               ) : (
                 <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-                  {managementWords.map(entry => {
+                  {filteredManagementWords.map(entry => {
                     const removing = removingIds.has(entry.id)
                     return (
                       <div key={entry.id} className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -719,7 +900,14 @@ export default function ReviewPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card className="overflow-hidden border-primary/20">
+        <Card
+          className={`touch-pan-y overflow-hidden border-primary/20 ${reviewSwipeTransition ? "transition-transform duration-150 ease-out" : ""}`}
+          style={{ transform: `translateX(${reviewSwipeOffset}px)` }}
+          onPointerDown={beginReviewSwipe}
+          onPointerMove={moveReviewSwipe}
+          onPointerUp={endReviewSwipe}
+          onPointerCancel={resetReviewSwipe}
+        >
           <CardHeader className="border-b bg-muted/20">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-1">
@@ -731,24 +919,28 @@ export default function ReviewPage() {
                 {currentDetail?.dictData?.phonetics?.filter(item => item.audio).map((item, index) => (
                   <Button key={`${item.audio}-${index}`} variant="outline" size="icon" onClick={() => playAudio(item.audio ?? "")}><Volume2 className="h-4 w-4" /></Button>
                 ))}
-                <Button variant="ghost" onClick={skipCurrent}>跳过</Button>
+                <Button variant="outline" onClick={goToPreviousReview} disabled={currentIndex <= 0}><ChevronLeft className="h-4 w-4" />上一个</Button>
+                <Button variant="ghost" onClick={skipCurrent}>跳过<ChevronRight className="h-4 w-4" /></Button>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-5 p-4">
             {!showAnswer ? (
                 <div className="flex flex-col items-center gap-4 py-12 text-center">
-                  <p className="max-w-md text-sm leading-relaxed text-muted-foreground">先在脑中回想这个词的核心画面、使用场景和常见搭配，再打开答案。</p>
-                  <Button size="lg" onClick={() => setShowAnswer(true)} disabled={loadingDetail}>{loadingDetail ? <Loader2 className="h-4 w-4 animate-spin" /> : null}显示答案</Button>
-                  <p className="text-xs text-muted-foreground">快捷键：Space 显示答案 · → 跳过</p>
+                  <p className="max-w-md text-sm leading-relaxed text-muted-foreground">{currentRowAlreadyGraded ? "这张卡片本轮已经评分，可打开答案查看笔记、问答和释义，然后跳过/继续下一张。" : "先在脑中回想这个词的核心画面、使用场景和常见搭配，再打开答案。"}</p>
+                  <Button size="lg" onClick={() => setShowAnswer(true)} disabled={loadingDetail}>{loadingDetail ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{currentRowAlreadyGraded ? "查看答案" : "显示答案"}</Button>
+                  <p className="text-xs text-muted-foreground">快捷键：← 上一个 · Space 显示答案 · → 跳过</p>
                 </div>
             ) : (
               <>
                 <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-muted-foreground">先评分，再继续下一张</span>
-                    <span className="text-xs text-muted-foreground">1/2/3/4 评分 · → 跳过</span>
+                    <span className="text-sm font-medium text-muted-foreground">{currentRowAlreadyGraded ? "本轮已评分，可继续查看答案" : "先评分，再继续下一张"}</span>
+                    <span className="text-xs text-muted-foreground">{currentRowAlreadyGraded ? "← 上一个 · → 跳过/继续" : "← 上一个 · 1/2/3/4 评分 · → 跳过"}</span>
                   </div>
+                  {currentRowAlreadyGraded && (
+                    <p className="mb-3 rounded-md border bg-background/70 p-2 text-sm text-muted-foreground">这张卡片本轮已经记录过评分，评分按钮已关闭；你仍可查看笔记、问答和释义，随后跳过/继续下一张。</p>
+                  )}
                   {renderReviewButtons("top")}
                 </div>
 
@@ -782,10 +974,53 @@ export default function ReviewPage() {
                   </div>
                 )}
 
+                {currentDetail?.dictData && currentDetail.aiData && (
+                  <WordChatPanel word={currentDetail.word} dictData={currentDetail.dictData} aiData={currentDetail.aiData} />
+                )}
+
+                <Card>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <CardTitle className="flex items-center gap-2 text-base"><Edit3 className="h-4 w-4 text-slate-500" />个人笔记</CardTitle>
+                      {!reviewEditingNotes ? (
+                        <Button variant="ghost" size="sm" onClick={() => setReviewEditingNotes(true)}><Edit3 className="h-3.5 w-3.5" />编辑</Button>
+                      ) : (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setReviewEditingNotes(false)
+                              setReviewNotesValue((currentDetail ?? currentRow).notes ?? "")
+                            }}
+                            disabled={reviewSavingNotes}
+                          >
+                            取消
+                          </Button>
+                          <Button size="sm" onClick={() => void saveReviewNotes()} disabled={reviewSavingNotes}>
+                            {reviewSavingNotes ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                            保存
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {reviewEditingNotes ? (
+                      <Textarea value={reviewNotesValue} onChange={event => setReviewNotesValue(event.target.value)} placeholder="在这里记录你的学习心得、例句 or 联想..." className="min-h-24" autoFocus />
+                    ) : (
+                      <div className="min-h-10 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{(currentDetail ?? currentRow).notes || "暂无笔记，点击编辑添加。"}</div>
+                    )}
+                  </CardContent>
+                </Card>
+
                 <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-wrap items-center justify-between gap-3 border-t bg-background/95 p-4 backdrop-blur">
-                  <span className="text-sm font-medium text-muted-foreground">SM-2 记忆评分</span>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={goToPreviousReview} disabled={currentIndex <= 0}><ChevronLeft className="h-4 w-4" />上一个</Button>
+                    <span className="text-sm font-medium text-muted-foreground">{currentRowAlreadyGraded ? "本轮已评分" : "SM-2 记忆评分"}</span>
+                  </div>
                   {renderReviewButtons("bottom")}
-                  <span className="w-full text-xs text-muted-foreground sm:w-auto">1/2/3/4 评分 · → 跳过</span>
+                  <span className="w-full text-xs text-muted-foreground sm:w-auto">←/→ 或左右滑动 · → 跳过</span>
                 </div>
               </>
             )}

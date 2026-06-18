@@ -61,6 +61,30 @@ const LONG_PRESS_MOVE_TOLERANCE = 8
 const DRAG_SELECT_MOVE_THRESHOLD = 6
 const AUTO_SCROLL_EDGE_PX = 72
 const AUTO_SCROLL_MAX_SPEED = 18
+const SWIPE_ACTIVATE_PX = 10
+const SWIPE_VERTICAL_CANCEL_PX = 8
+const SWIPE_THRESHOLD_PX = 80
+const SYSTEM_BACK_EDGE_EXCLUSION_PX = 32
+const MOBILE_DETAIL_MEDIA_QUERY = "(max-width: 767px)"
+const VOCABULARY_DETAIL_HISTORY_FLAG = "__aiDictVocabularyDetailModal"
+const VOCABULARY_DETAIL_HISTORY_ID = "__aiDictVocabularyDetailId"
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null
+
+const isMobileDetailViewport = () => window.matchMedia(MOBILE_DETAIL_MEDIA_QUERY).matches
+
+const getVocabularyDetailHistoryId = (state: unknown) => {
+  if (!isObjectRecord(state)) return null
+  return state[VOCABULARY_DETAIL_HISTORY_FLAG] === true && typeof state[VOCABULARY_DETAIL_HISTORY_ID] === "string"
+    ? state[VOCABULARY_DETAIL_HISTORY_ID]
+    : null
+}
+
+const createVocabularyDetailHistoryState = (baseState: unknown, detailId: string): Record<string, unknown> => ({
+  ...(isObjectRecord(baseState) ? baseState : {}),
+  [VOCABULARY_DETAIL_HISTORY_FLAG]: true,
+  [VOCABULARY_DETAIL_HISTORY_ID]: detailId,
+})
 
 type VocabularyWireEntry = Omit<Partial<VocabularyEntry>, "createdAt" | "imageMode"> & {
   createdAt?: string | Date
@@ -108,6 +132,14 @@ type CapturedPointerState = {
   element: HTMLDivElement
 }
 
+type DetailSwipeState = {
+  pointerId: number
+  startX: number
+  startY: number
+  locked: boolean
+  cancelled: boolean
+}
+
 export default function VocabularyPage() {
   const [words, setWords] = useState<VocabularyEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -132,6 +164,8 @@ export default function VocabularyPage() {
   const [planDialogSelection, setPlanDialogSelection] = useState<Set<string>>(() => new Set())
   const [bulkAction, setBulkAction] = useState<BulkAction>(null)
   const [selectionMode, setSelectionMode] = useState(false)
+  const [detailSwipeOffset, setDetailSwipeOffset] = useState(0)
+  const [detailSwipeTransition, setDetailSwipeTransition] = useState(false)
   const detailRequestId = useRef(0)
   const listScrollRef = useRef<HTMLDivElement>(null)
   const dragSelectionRef = useRef<DragSelectionState | null>(null)
@@ -140,6 +174,8 @@ export default function VocabularyPage() {
   const autoScrollFrameRef = useRef<number | null>(null)
   const latestPointerPointRef = useRef<{ clientX: number; clientY: number } | null>(null)
   const suppressNextRowClickRef = useRef(false)
+  const detailSwipeRef = useRef<DetailSwipeState | null>(null)
+  const detailHistoryActiveRef = useRef(false)
 
   const currentIndex = useMemo(
     () => words.findIndex(entry => entry.id === expandedId),
@@ -201,6 +237,17 @@ export default function VocabularyPage() {
     })
   }, [words])
 
+  useEffect(() => {
+    if (!expandedId || !isMobileDetailViewport()) return
+
+    const previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow
+    }
+  }, [expandedId])
+
   const cancelLongPress = useCallback(() => {
     const longPress = longPressRef.current
     if (longPress) window.clearTimeout(longPress.timerId)
@@ -254,6 +301,9 @@ export default function VocabularyPage() {
 
   const loadDetail = useCallback(async (id: string) => {
     const listEntry = words.find(entry => entry.id === id)
+    detailSwipeRef.current = null
+    setDetailSwipeTransition(false)
+    setDetailSwipeOffset(0)
     setExpandedId(id)
     setExpandedData(listEntry ?? null)
     setNotesValue(listEntry?.notes ?? "")
@@ -280,6 +330,54 @@ export default function VocabularyPage() {
       if (detailRequestId.current === requestId) setLoadingDetail(false)
     }
   }, [words])
+
+  const closeDetailState = useCallback(() => {
+    detailRequestId.current += 1
+    detailSwipeRef.current = null
+    setDetailSwipeTransition(false)
+    setDetailSwipeOffset(0)
+    setExpandedId(null)
+    setExpandedData(null)
+    setEditingNotes(false)
+    setLoadingDetail(false)
+  }, [])
+
+  const syncMobileDetailHistory = useCallback((id: string) => {
+    if (!isMobileDetailViewport()) return
+
+    const nextState = createVocabularyDetailHistoryState(window.history.state, id)
+    if (getVocabularyDetailHistoryId(window.history.state)) {
+      window.history.replaceState(nextState, "", window.location.href)
+    } else {
+      window.history.pushState(nextState, "", window.location.href)
+    }
+    detailHistoryActiveRef.current = true
+  }, [])
+
+  const closeDetail = useCallback(() => {
+    const shouldStepBack = detailHistoryActiveRef.current && getVocabularyDetailHistoryId(window.history.state) !== null
+    closeDetailState()
+    detailHistoryActiveRef.current = false
+    if (shouldStepBack) window.history.back()
+  }, [closeDetailState])
+
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const detailId = getVocabularyDetailHistoryId(event.state)
+      if (detailId) {
+        detailHistoryActiveRef.current = true
+        if (isMobileDetailViewport()) void loadDetail(detailId)
+        return
+      }
+
+      if (!detailHistoryActiveRef.current) return
+      detailHistoryActiveRef.current = false
+      closeDetailState()
+    }
+
+    window.addEventListener("popstate", handlePopState)
+    return () => window.removeEventListener("popstate", handlePopState)
+  }, [closeDetailState, loadDetail])
 
   const removeDeletedWordsFromState = (ids: string[]) => {
     const deletedIds = new Set(ids)
@@ -358,7 +456,70 @@ export default function VocabularyPage() {
     const baseIndex = currentIndex >= 0 ? currentIndex : 0
     const nextIndex = baseIndex + direction
     if (nextIndex < 0 || nextIndex >= words.length) return
-    void loadDetail(words[nextIndex].id)
+    const nextId = words[nextIndex].id
+    syncMobileDetailHistory(nextId)
+    void loadDetail(nextId)
+  }
+
+  const resetDetailSwipe = useCallback(() => {
+    setDetailSwipeTransition(true)
+    setDetailSwipeOffset(0)
+    detailSwipeRef.current = null
+  }, [])
+
+  const beginDetailSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!expandedData || event.button !== 0) return
+    if (event.clientX <= SYSTEM_BACK_EDGE_EXCLUSION_PX) return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest("button, input, select, textarea, a, [contenteditable]:not([contenteditable='false'])")) return
+    detailSwipeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      locked: false,
+      cancelled: false,
+    }
+    setDetailSwipeTransition(false)
+  }
+
+  const moveDetailSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const swipe = detailSwipeRef.current
+    if (!swipe || swipe.pointerId !== event.pointerId || swipe.cancelled) return
+    const deltaX = event.clientX - swipe.startX
+    const deltaY = event.clientY - swipe.startY
+
+    if (!swipe.locked) {
+      if (Math.abs(deltaY) > SWIPE_VERTICAL_CANCEL_PX && Math.abs(deltaY) > Math.abs(deltaX)) {
+        swipe.cancelled = true
+        detailSwipeRef.current = null
+        setDetailSwipeOffset(0)
+        return
+      }
+      if (Math.abs(deltaX) < SWIPE_ACTIVATE_PX || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) return
+      swipe.locked = true
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch (captureError) {
+        void captureError
+      }
+    }
+
+    event.preventDefault()
+    setDetailSwipeOffset(deltaX)
+  }
+
+  const endDetailSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const swipe = detailSwipeRef.current
+    if (!swipe || swipe.pointerId !== event.pointerId) return
+    const deltaX = event.clientX - swipe.startX
+    const canNavigatePrevious = currentIndex > 0
+    const canNavigateNext = currentIndex >= 0 && currentIndex < words.length - 1
+    const shouldNavigatePrevious = deltaX > SWIPE_THRESHOLD_PX && canNavigatePrevious
+    const shouldNavigateNext = deltaX < -SWIPE_THRESHOLD_PX && canNavigateNext
+
+    resetDetailSwipe()
+    if (shouldNavigatePrevious) navigateLoadedList(-1)
+    else if (shouldNavigateNext) navigateLoadedList(1)
   }
 
   const applyVocabularyUpdates = (updatedRows: VocabularyEntry[]) => {
@@ -635,6 +796,7 @@ export default function VocabularyPage() {
       return
     }
     if (selectionMode) return
+    syncMobileDetailHistory(id)
     void loadDetail(id)
   }
 
@@ -753,7 +915,14 @@ export default function VocabularyPage() {
     const isLast = currentIndex === -1 || currentIndex >= words.length - 1
 
     return (
-      <Card className="h-full min-h-0 overflow-hidden border-primary/20 shadow-sm md:sticky md:top-20 md:h-[calc(100vh-6rem)] md:max-h-[calc(100vh-6rem)]">
+      <Card
+        className={`h-full min-h-0 touch-pan-y overflow-hidden border-primary/20 shadow-sm md:sticky md:top-20 md:h-[calc(100vh-6rem)] md:max-h-[calc(100vh-6rem)] ${detailSwipeTransition ? "transition-transform duration-150 ease-out" : ""}`}
+        style={{ transform: `translateX(${detailSwipeOffset}px)` }}
+        onPointerDown={beginDetailSwipe}
+        onPointerMove={moveDetailSwipe}
+        onPointerUp={endDetailSwipe}
+        onPointerCancel={resetDetailSwipe}
+      >
         <div className="flex h-full min-h-0 flex-col bg-muted/10">
           <div className="sticky top-0 z-10 border-b bg-background/95 p-4 backdrop-blur">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -768,7 +937,7 @@ export default function VocabularyPage() {
               </div>
               <div className="flex items-center gap-2">
                 {loadingDetail && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-                <Button variant="ghost" size="icon" onClick={() => { setExpandedId(null); setExpandedData(null); setEditingNotes(false) }}>
+                <Button variant="ghost" size="icon" onClick={closeDetail}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -1041,7 +1210,7 @@ export default function VocabularyPage() {
       {expandedId && (
         <div
           className="fixed inset-0 z-50 flex bg-background/80 backdrop-blur-sm md:hidden"
-          onClick={() => { setExpandedId(null); setExpandedData(null); setEditingNotes(false) }}
+          onClick={closeDetail}
         >
           <div
             className="h-full w-full overflow-hidden bg-background"
