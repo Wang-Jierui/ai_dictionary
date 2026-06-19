@@ -46,7 +46,7 @@ services:
       - 8.8.4.4
     environment:
       DATABASE_URL: "postgresql://postgres:postgres@db:5432/ai_dictionary"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env before starting the app}"
     depends_on:
       db:
         condition: service_healthy

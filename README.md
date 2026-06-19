@@ -32,7 +32,7 @@ docker compose up -d --build
 - 删除用户
 - 重置用户密码（点击钥匙图标，输入新密码）
 
-管理密码通过环境变量 `ADMIN_PASSWORD` 配置，默认为 `admin123`。建议在生产环境中修改：
+管理密码必须通过环境变量 `ADMIN_PASSWORD` 显式配置；Docker 启动时未设置该值会直接失败。请在首次启动前改成自己的强密码：
 
 ```bash
 # .env 或 docker-compose.yml 中设置

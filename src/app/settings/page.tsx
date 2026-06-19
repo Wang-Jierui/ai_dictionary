@@ -1,12 +1,12 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback, type PointerEvent as ReactPointerEvent } from "react"
+import { useState, useEffect, useRef, useCallback, type ChangeEvent, type PointerEvent as ReactPointerEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Save, Plus, Trash2, Loader2, LogIn, LogOut, UserPlus, Shield, KeyRound, ArrowUp, ArrowDown, RotateCcw, GripVertical } from "lucide-react"
+import { Save, Plus, Trash2, Loader2, LogIn, LogOut, UserPlus, Shield, KeyRound, ArrowUp, ArrowDown, RotateCcw, GripVertical, DatabaseBackup, Download, Upload } from "lucide-react"
 import { AISectionId } from "@/lib/constants"
 import { DEFAULT_SECTION_ORDER, sanitizeSectionOrder } from "@/lib/section-order"
 import type { AIEndpointConfig, AITask } from "@/types/dictionary"
@@ -66,6 +66,13 @@ export default function SettingsPage() {
   const pointerDragSectionRef = useRef<AISectionId | null>(null)
   const activePointerIdRef = useRef<number | null>(null)
   const dragTargetRef = useRef<AISectionId | null>(null)
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const [backupExporting, setBackupExporting] = useState(false)
+  const [backupImporting, setBackupImporting] = useState(false)
+  const [backupAdminPassword, setBackupAdminPassword] = useState("")
+  const [backupStatus, setBackupStatus] = useState("")
+  const [backupError, setBackupError] = useState("")
 
   const [currentUser, setCurrentUser] = useState<string | null>(null)
   const [authUsername, setAuthUsername] = useState("")
@@ -116,7 +123,10 @@ export default function SettingsPage() {
   }
 
   const authAction = async (action: "login" | "register") => {
-    if (!authUsername.trim() || !authPassword) return
+    if (!authUsername.trim() || !authPassword) {
+      setAuthError("请输入用户名和密码")
+      return
+    }
     setAuthLoading(true)
     setAuthError("")
 
@@ -388,6 +398,89 @@ export default function SettingsPage() {
     })
     setResetUserId(null)
     setResetNewPassword("")
+  }
+
+  const exportBackup = async () => {
+    setBackupExporting(true)
+    setBackupStatus("")
+    setBackupError("")
+    try {
+      const res = await fetch("/api/backup", {
+        headers: { "x-admin-password": backupAdminPassword },
+      })
+      if (!res.ok) {
+        const data: unknown = await res.json()
+        const message = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
+          ? data.error
+          : "导出失败"
+        throw new Error(message)
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `ai_dictionary_backup_${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+      setBackupStatus("备份文件已开始下载。")
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : "导出失败")
+    } finally {
+      setBackupExporting(false)
+    }
+  }
+
+  const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0]
+    if (!file) return
+
+    setBackupStatus("")
+    setBackupError("")
+    const confirmed = window.confirm("导入备份会替换当前所有非 API 本地数据；API Key、API endpoint 和用户账号不会被导入或覆盖。确定继续吗？")
+    if (!confirmed) {
+      event.currentTarget.value = ""
+      return
+    }
+
+    setBackupImporting(true)
+    try {
+      const text = await file.text()
+      let payload: unknown
+      try {
+        payload = JSON.parse(text)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "JSON 解析失败"
+        throw new Error(`备份文件不是有效 JSON：${message}`)
+      }
+
+      const res = await fetch("/api/backup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": backupAdminPassword,
+        },
+        body: JSON.stringify(payload),
+      })
+      const data: unknown = await res.json()
+
+      if (!res.ok) {
+        const message = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
+          ? data.error
+          : "导入失败"
+        throw new Error(message)
+      }
+
+      setBackupStatus("导入成功，页面即将刷新。")
+      window.setTimeout(() => window.location.reload(), 800)
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : "导入失败")
+    } finally {
+      setBackupImporting(false)
+      event.currentTarget.value = ""
+    }
   }
 
   if (loading) {
@@ -706,6 +799,58 @@ export default function SettingsPage() {
               </div>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <DatabaseBackup className="h-4 w-4" />
+            本地数据备份
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-lg border border-dashed bg-secondary/20 p-4 space-y-2">
+            <p className="text-sm text-muted-foreground">
+              导出会包含设置（不含 API endpoint）、查询历史、生词本、复习计划、角色扮演、场景练习和单词聊天记录。
+            </p>
+            <p className="text-sm font-medium text-foreground">
+              API Key、API endpoint、用户账号和密码不会被导出，也不会在导入时被覆盖。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">管理密码</label>
+            <Input
+              type="password"
+              value={backupAdminPassword}
+              onChange={event => setBackupAdminPassword(event.target.value)}
+              placeholder="导出或导入备份前请输入管理密码"
+              className="max-w-sm"
+            />
+            <p className="text-xs text-muted-foreground">备份包含全部本地学习数据，导出和导入都需要管理员授权。</p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={exportBackup} disabled={backupExporting || backupImporting || !backupAdminPassword}>
+              {backupExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              导出 JSON 备份
+            </Button>
+            <Button onClick={() => backupFileInputRef.current?.click()} disabled={backupExporting || backupImporting || !backupAdminPassword}>
+              {backupImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              导入并替换本地数据
+            </Button>
+            <input
+              ref={backupFileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={importBackup}
+            />
+          </div>
+
+          {backupStatus && <p className="text-sm text-muted-foreground">{backupStatus}</p>}
+          {backupError && <p className="text-sm text-destructive">{backupError}</p>}
         </CardContent>
       </Card>
 
