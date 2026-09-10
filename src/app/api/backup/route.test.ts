@@ -18,6 +18,7 @@ const mockPrisma = vi.hoisted(() => {
     roleplaySession: table(),
     sceneHistory: table(),
     wordChat: table(),
+    sentenceAnalysis: table(),
     userApiConfig: table(),
     $transaction: vi.fn(),
   }
@@ -123,6 +124,7 @@ describe("/api/backup", () => {
     vi.clearAllMocks()
     process.env.ADMIN_PASSWORD = "admin-secret"
     mockPrisma.$transaction.mockImplementation((callback: TransactionCallback) => callback(mockPrisma))
+    mockPrisma.sentenceAnalysis.findMany.mockResolvedValue([])
   })
 
   it("exports all non-sensitive datasets without API endpoints or user configs", async () => {
@@ -154,7 +156,7 @@ describe("/api/backup", () => {
     expect(response.status).toBe(200)
     expect(response.headers.get("Content-Disposition")).toContain("attachment")
     expect(response.headers.get("Content-Type")).toContain("application/json")
-    expect(data).toMatchObject({ schemaVersion: 1, app: "ai_dictionary" })
+    expect(data).toMatchObject({ schemaVersion: 2, app: "ai_dictionary" })
     expect(data.data).toMatchObject({
       settings: expect.any(Array),
       searchHistory: expect.any(Array),
@@ -164,6 +166,7 @@ describe("/api/backup", () => {
       roleplaySessions: expect.any(Array),
       sceneHistory: expect.any(Array),
       wordChats: expect.any(Array),
+      sentenceAnalyses: expect.any(Array),
     })
     expect(data.data.settings[0]).not.toHaveProperty("aiEndpoints")
     expect(data.data).not.toHaveProperty("userApiConfig")
@@ -199,6 +202,7 @@ describe("/api/backup", () => {
     expect(mockPrisma.reviewPlan.deleteMany).toHaveBeenCalled()
     expect(mockPrisma.vocabulary.deleteMany).toHaveBeenCalled()
     expect(mockPrisma.searchHistory.deleteMany).toHaveBeenCalled()
+    expect(mockPrisma.sentenceAnalysis.deleteMany).not.toHaveBeenCalled()
     expect(mockPrisma.settings.deleteMany).not.toHaveBeenCalled()
     expect(mockPrisma.userApiConfig.deleteMany).not.toHaveBeenCalled()
     expect(mockPrisma.userApiConfig.createMany).not.toHaveBeenCalled()
@@ -224,6 +228,38 @@ describe("/api/backup", () => {
     expect(mockPrisma.reviewPlanWord.createMany).toHaveBeenCalledWith({
       data: [{ reviewPlanId: "plan-1", vocabularyId: "vocab-1", createdAt: new Date("2026-06-08T00:00:00.000Z") }],
     })
+  })
+
+  it("round-trips sentence analysis and follow-ups in version 2 backups", async () => {
+    const reading = {
+      id: "sentence-1", sentence: "I came back.", context: "A visit", source: "Book",
+      analysis: { translation: "我回来了。", overview: "说话者回来了。", chunks: [{ text: "I came back", explanation: "主句" }], difficulties: [], structure: "", contextNote: "" },
+      messages: [{ id: "m1", role: "user", content: "为什么用过去时？", createdAt: "2026-09-10T00:00:00.000Z" }],
+      createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z", version: 2,
+    }
+    mockPrisma.settings.findMany.mockResolvedValue([])
+    mockPrisma.sentenceAnalysis.findMany.mockResolvedValue([reading])
+    const headers = { "x-admin-password": "admin-secret" }
+    const exported = await (await GET(new Request("http://localhost/api/backup", { headers }))).json()
+    expect(exported.data.sentenceAnalyses).toEqual([reading])
+    const response = await POST(new Request("http://localhost/api/backup", {
+      method: "POST", headers,
+      body: JSON.stringify({ ...backupEnvelope, schemaVersion: 2, data: { ...backupEnvelope.data, sentenceAnalyses: exported.data.sentenceAnalyses } }),
+    }))
+    expect(response.status).toBe(200)
+    expect(mockPrisma.sentenceAnalysis.deleteMany).toHaveBeenCalledOnce()
+    expect(mockPrisma.sentenceAnalysis.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+      sentence: reading.sentence, context: reading.context, source: reading.source, analysis: reading.analysis, messages: reading.messages,
+    })] })
+  })
+
+  it("rejects malformed sentence backups before changing any table", async () => {
+    const response = await POST(new Request("http://localhost/api/backup", {
+      method: "POST", headers: { "x-admin-password": "admin-secret" },
+      body: JSON.stringify({ ...backupEnvelope, schemaVersion: 2, data: { ...backupEnvelope.data, sentenceAnalyses: [{ sentence: "Hi", analysis: {} }] } }),
+    }))
+    expect(response.status).toBe(400)
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
   })
 
   it("returns 400 for malformed import payloads", async () => {

@@ -8,10 +8,12 @@ import type { ReviewPlanWordCreateManyInput } from "@/generated/prisma/models/Re
 import type { RoleplaySessionCreateManyInput } from "@/generated/prisma/models/RoleplaySession"
 import type { SceneHistoryCreateManyInput } from "@/generated/prisma/models/SceneHistory"
 import type { WordChatCreateManyInput } from "@/generated/prisma/models/WordChat"
+import type { SentenceAnalysisCreateManyInput } from "@/generated/prisma/models/SentenceAnalysis"
 import { prisma } from "@/lib/prisma"
+import { sentenceExplanationSchema, sentenceInputSchema, sentenceMessageSchema } from "@/lib/sentence"
 
 const APP_ID = "ai_dictionary"
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 const settingsSelect = {
   id: true,
@@ -115,6 +117,7 @@ type RestoredBackup = {
   roleplaySessions: RestoredRoleplaySession[]
   sceneHistory: RestoredSceneHistory[]
   wordChats: RestoredWordChat[]
+  sentenceAnalyses?: SentenceAnalysisCreateManyInput[]
 }
 
 type ValidationResult =
@@ -145,6 +148,7 @@ export async function GET(request: Request) {
     roleplaySessions,
     sceneHistory,
     wordChats,
+    sentenceAnalyses,
   ] = await Promise.all([
     prisma.settings.findMany({ select: settingsSelect, orderBy: { id: "asc" } }),
     prisma.searchHistory.findMany({ orderBy: { createdAt: "asc" } }),
@@ -154,6 +158,7 @@ export async function GET(request: Request) {
     prisma.roleplaySession.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.sceneHistory.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.wordChat.findMany({ orderBy: { createdAt: "asc" } }),
+    prisma.sentenceAnalysis.findMany({ orderBy: { createdAt: "asc" } }),
   ])
 
   const envelope = {
@@ -169,6 +174,7 @@ export async function GET(request: Request) {
       roleplaySessions,
       sceneHistory,
       wordChats,
+      sentenceAnalyses,
     },
   }
 
@@ -209,6 +215,8 @@ export async function POST(request: Request) {
     await tx.reviewPlan.deleteMany()
     await tx.vocabulary.deleteMany()
     await tx.searchHistory.deleteMany()
+    // Version 1 backups predate sentence analysis; preserve newer reading records.
+    if (parsed.backup.sentenceAnalyses !== undefined) await tx.sentenceAnalysis.deleteMany()
 
     for (const row of parsed.backup.settings) {
       const id = row.id ?? "default"
@@ -240,6 +248,9 @@ export async function POST(request: Request) {
     if (parsed.backup.reviewPlanWords.length > 0) {
       await tx.reviewPlanWord.createMany({ data: parsed.backup.reviewPlanWords.map(toReviewPlanWordCreateManyInput) })
     }
+    if (parsed.backup.sentenceAnalyses?.length) {
+      await tx.sentenceAnalysis.createMany({ data: parsed.backup.sentenceAnalyses })
+    }
   })
 
   return NextResponse.json({
@@ -253,6 +264,7 @@ export async function POST(request: Request) {
       roleplaySessions: parsed.backup.roleplaySessions.length,
       sceneHistory: parsed.backup.sceneHistory.length,
       wordChats: parsed.backup.wordChats.length,
+      sentenceAnalyses: parsed.backup.sentenceAnalyses?.length ?? 0,
     },
   })
 }
@@ -260,7 +272,7 @@ export async function POST(request: Request) {
 function validateBackupEnvelope(value: unknown): ValidationResult {
   try {
     if (!isRecord(value)) throw new BackupValidationError("Backup must be a JSON object")
-    if (value.schemaVersion !== SCHEMA_VERSION) throw new BackupValidationError("Unsupported backup schemaVersion")
+    if (value.schemaVersion !== 1 && value.schemaVersion !== SCHEMA_VERSION) throw new BackupValidationError("Unsupported backup schemaVersion")
     if (value.app !== APP_ID) throw new BackupValidationError("Backup app does not match ai_dictionary")
     const data = readRecord(value, "data")
 
@@ -275,11 +287,30 @@ function validateBackupEnvelope(value: unknown): ValidationResult {
         roleplaySessions: readArray(data, "roleplaySessions").map(parseRoleplaySession),
         sceneHistory: readArray(data, "sceneHistory").map(parseSceneHistory),
         wordChats: readArray(data, "wordChats").map(parseWordChat),
+        sentenceAnalyses: value.schemaVersion === 2 ? readArray(data, "sentenceAnalyses").map(parseSentenceAnalysis) : undefined,
       },
     }
   } catch (error) {
     const message = error instanceof BackupValidationError ? error.message : "Malformed backup data"
     return { ok: false, error: message }
+  }
+}
+
+function parseSentenceAnalysis(record: RecordValue): SentenceAnalysisCreateManyInput {
+  const input = sentenceInputSchema.safeParse(record)
+  const analysis = sentenceExplanationSchema.safeParse(record.analysis)
+  const messages = sentenceMessageSchema.array().max(200).safeParse(record.messages ?? [])
+  if (!input.success || !analysis.success || !messages.success) {
+    throw new BackupValidationError("Invalid sentence analysis or conversation")
+  }
+  return {
+    ...input.data,
+    id: optionalString(record, "id"),
+    analysis: analysis.data,
+    messages: messages.data,
+    version: 0,
+    createdAt: optionalDate(record, "createdAt"),
+    updatedAt: optionalDate(record, "updatedAt"),
   }
 }
 

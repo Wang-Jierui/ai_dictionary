@@ -88,6 +88,7 @@ export type AITask =
   | "roleplay"
   | "image"
   | "scene"
+  | "sentence"
 
 // Vocabulary book entry
 export interface VocabularyEntry {

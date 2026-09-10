@@ -6,7 +6,7 @@ import { BookOpen, Dumbbell, RotateCcw, Settings, BookmarkCheck } from "lucide-r
 import { cn } from "@/lib/utils"
 
 const navItems = [
-  { href: "/", label: "查词", icon: BookOpen },
+  { href: "/", label: "查词 / 读句", icon: BookOpen },
   { href: "/vocabulary", label: "生词本", icon: BookmarkCheck },
   { href: "/review", label: "复习", icon: RotateCcw },
   { href: "/practice", label: "练习", icon: Dumbbell },
@@ -28,6 +28,7 @@ export function Nav() {
             <Link
               key={href}
               href={href}
+              aria-label={label}
               className={cn(
                 "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm transition-colors sm:px-3",
                 active

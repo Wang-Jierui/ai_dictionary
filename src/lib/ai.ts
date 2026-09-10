@@ -18,7 +18,7 @@ export async function getEndpointForTask(task: AITask): Promise<AIEndpointConfig
     if (userConfig) {
       const userEndpoints = userConfig.aiEndpoints as unknown as AIEndpointConfig[]
       if (userEndpoints.length > 0) {
-        const endpoint = userEndpoints.find(e => e.tasks.includes(task)) ?? userEndpoints[0]
+        const endpoint = selectTaskEndpoint(userEndpoints, task)
         return endpoint ?? null
       }
     }
@@ -28,8 +28,14 @@ export async function getEndpointForTask(task: AITask): Promise<AIEndpointConfig
   if (!settings) return null
 
   const endpoints = settings.aiEndpoints as unknown as AIEndpointConfig[]
-  const endpoint = endpoints.find(e => e.tasks.includes(task)) ?? endpoints[0]
+  const endpoint = selectTaskEndpoint(endpoints, task)
   return endpoint ?? null
+}
+
+function selectTaskEndpoint(endpoints: AIEndpointConfig[], task: AITask) {
+  return endpoints.find(endpoint => endpoint.tasks.includes(task))
+    ?? (task === "sentence" ? endpoints.find(endpoint => endpoint.tasks.includes("lookup")) : undefined)
+    ?? endpoints[0]
 }
 
 export async function getModelForTask(task: AITask) {

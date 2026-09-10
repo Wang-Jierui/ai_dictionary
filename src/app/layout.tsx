@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AI 词典",
-  description: "AI 驱动的智能英语词典",
+  description: "理解英语阅读中的单词、短语和句子，结合原文解答疑问",
 };
 
 export default function RootLayout({

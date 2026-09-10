@@ -2,14 +2,14 @@
 
 import { useSearchParams } from "next/navigation"
 import { Suspense, useState, useRef, useEffect, useCallback } from "react"
-import { Search, Volume2, RefreshCw, Swords, Loader2, Sparkles, History as HistoryIcon, BookOpen, Languages, Trash2, Edit3, Save, ListPlus } from "lucide-react"
+import { Volume2, RefreshCw, Swords, Loader2, Sparkles, History as HistoryIcon, BookOpen, Languages, Trash2, Edit3, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { AiLearningSection, WordImagePanel, type WordImageMode } from "@/components/ai-learning-sections"
 import { WordChatPanel } from "@/components/word-chat-panel"
+import { ReadingWorkspace } from "@/components/reading-workspace"
 import type { AISectionId } from "@/lib/constants"
 import { DEFAULT_SECTION_ORDER, sanitizeSectionOrder } from "@/lib/section-order"
 import type { DictionaryEntry, AIWordData } from "@/types/dictionary"
@@ -76,7 +76,6 @@ function HomeContent() {
   const [notesValue, setNotesValue] = useState("")
   const [savingNotes, setSavingNotes] = useState(false)
   const [sectionOrder, setSectionOrder] = useState<AISectionId[]>(DEFAULT_SECTION_ORDER)
-  const inputRef = useRef<HTMLInputElement>(null)
   const initialized = useRef(false)
   
   const activeResult = activeWord ? results.get(activeWord) : null
@@ -228,10 +227,6 @@ function HomeContent() {
     new Audio(audioUrl).play()
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") searchWord(query)
-  }
-
   const removeResult = (word: string) => {
     setResults(prev => {
       const next = new Map(prev)
@@ -317,30 +312,9 @@ function HomeContent() {
   }
 
   return (
+    <ReadingWorkspace query={query} onQueryChange={setQuery} onLookupWord={searchWord}>
     <div className="space-y-6">
       <div className="space-y-3">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              ref={inputRef}
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="输入英文单词..."
-              className="pl-9 h-11 text-base"
-              autoFocus
-            />
-          </div>
-          <Button onClick={() => searchWord(query)} className="h-11 px-6">
-            查询
-          </Button>
-          <Button variant="outline" onClick={() => { window.location.href = "/batch" }} className="h-11 px-4">
-            <ListPlus className="h-4 w-4" />
-            <span className="hidden sm:inline">批量查词</span>
-          </Button>
-        </div>
-
         {(results.size > 0 || history.length > 0) && (
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-3 flex-1">
@@ -562,10 +536,11 @@ function HomeContent() {
       {results.size === 0 && (
         <div className="text-center py-20 text-muted-foreground">
           <BookOpen className="h-12 w-12 mx-auto mb-4 opacity-30" />
-          <p className="text-lg">输入单词，开始探索</p>
-          <p className="text-sm mt-1">AI 将为你提供定制例句、语感辨析、词源故事和记忆法</p>
+          <p className="text-lg">读到哪里不明白，就从这里开始</p>
+          <p className="text-sm mt-1">查一个单词，或粘贴一句英文，理解它在原文中的意思</p>
         </div>
       )}
     </div>
+    </ReadingWorkspace>
   )
 }

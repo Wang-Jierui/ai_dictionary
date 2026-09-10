@@ -13,6 +13,7 @@ import type { AIEndpointConfig, AITask } from "@/types/dictionary"
 
 const ALL_TASKS: { value: AITask; label: string }[] = [
   { value: "lookup", label: "查词" },
+  { value: "sentence", label: "句子解析" },
   { value: "story", label: "故事" },
   { value: "roleplay", label: "对话" },
   { value: "image", label: "生图" },
@@ -812,7 +813,7 @@ export default function SettingsPage() {
         <CardContent className="space-y-4">
           <div className="rounded-lg border border-dashed bg-secondary/20 p-4 space-y-2">
             <p className="text-sm text-muted-foreground">
-              导出会包含设置（不含 API endpoint）、查询历史、生词本、复习计划、角色扮演、场景练习和单词聊天记录。
+              导出会包含设置（不含 API endpoint）、查询历史、生词本、复习计划、角色扮演、场景练习、单词聊天和句子解析（含追问）。
             </p>
             <p className="text-sm font-medium text-foreground">
               API Key、API endpoint、用户账号和密码不会被导出，也不会在导入时被覆盖。

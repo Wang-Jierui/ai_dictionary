@@ -2,6 +2,16 @@
 
 本项目是一个基于大语言模型（LLM）的智能英语学习工具，提供多义词详解、定制化例句、语境辨析、词源故事、脑洞记忆法、情景角色扮演等深度学习功能。
 
+## 阅读理解入口与句子解析
+
+主页由 `src/components/reading-workspace.tsx` 提供统一输入框，自动识别单词和短语/句子，也允许手动选择。单词内容仍由 `src/app/page.tsx` 渲染；句子结果优先显示整体理解和关键难点，详细意群和语法结构折叠显示。
+
+句子解析：`POST /api/ai/sentence` 校验句子、前后文和来源，用 `src/lib/sentence.ts` 构造提示词并校验完整 JSON，成功写入 `SentenceAnalysis` 后返回。无效输出不保存。来源仅用于记录，不抓取链接。模型使用 `sentence` 任务，未配置时优先使用查词模型。
+
+追问：`POST /api/ai/sentence-chat` 按记录 ID 读取原句、上下文和已保存的解析，并带上最近 20 条对话。选中片段必须存在于原句中。回答成功后以 `id + version` 条件原子更新对话，避免多页面相互覆盖。数据库保留完整对话，每条解析最多 200 条消息。
+
+历史：`GET /api/sentence/history` 提供每页 20 条的原句/来源搜索；带 `id` 获取完整解析与追问；`DELETE` 删除指定记录。阅读记录沿用现有实例共享的数据模型。JSON 备份版本 2 包含新表，导入旧版备份时保留现有阅读记录。
+
 ## 1. 技术栈 (Tech Stack)
 
 *   **前端框架**: Next.js 16 (App Router) + React 19
@@ -36,8 +46,8 @@ sequenceDiagram
             API-->>User: 立即返回完整页面 (标记"已缓存")
         else 未命中
             API->>LLM: 携带用户兴趣发送 System Prompt
-            LLM-->>API: 流式返回 (Streaming) AIWordData
-            API-->>User: 前端打字机效果逐行渲染
+            LLM-->>API: 返回完整 AIWordData，服务端校验并保存
+            API-->>User: 返回完整 JSON 结果
         end
     and 基础词典数据获取
         API->>FreeDict: 获取音标、基础释义、发音音频
@@ -80,7 +90,7 @@ sequenceDiagram
 
 | 模块名称 | 路径/入口 | 功能描述 | 核心技术点 |
 | :--- | :--- | :--- | :--- |
-| **智能查词** | `/` (主页) | 即时查询入口，展示基础词意、AI 多义词详解、兴趣定制例句、语感辨析和词源故事，并自动写入缓存。 | `Vercel AI SDK` 流式输出，共用 `ai-parser` 做结构化 JSON 解析，Promise 并发请求。 |
+| **查词与读句** | `/` (主页) | 单词解释与缓存；句子整体理解、难点、意群拆解、结合原句追问和解析历史。 | `Vercel AI SDK` 生成完整 JSON，服务端校验并保存；句子追问采用乐观并发控制。 |
 | **生词学习中心** | `/vocabulary` | 集中管理已缓存单词：搜索/过滤、详情展开、复习模式、笔记、脑洞记忆法再生成、AI 生图辅助和单词对话。 | 数据库部分匹配过滤，按需拉取完整缓存行，复用查词缓存与 AI 辅助接口。 |
 | **串词故事** | `/story` | 从生词本勾选 2-10 个单词，AI 自动编写一篇包含这些词的连贯小短文。 | 动态构建 Prompt，长文本流式生成。 |
 | **角色扮演** | `/roleplay` | AI 自动匹配最佳使用场景，与用户进行情景对话，若用户使用错误会给予纠正反馈。 | AI 身份设定 (System Prompt) + 历史上下文管理。 |
@@ -102,7 +112,7 @@ ai_dictionary/
 │   │   │   ├── ai/             # 所有 AI 相关的后端路由
 │   │   │   │   ├── auto-scenario/route.ts # 为角色扮演自动生成场景
 │   │   │   │   ├── image/route.ts         # DALL-E 生图接口
-│   │   │   │   ├── lookup/route.ts        # 核心查词（流式 JSON 输出）
+│   │   │   │   ├── lookup/route.ts        # 核心查词（服务端校验完整 JSON）
 │   │   │   │   ├── mnemonic/route.ts      # 重新生成脑洞记忆法
 │   │   │   │   ├── roleplay/route.ts      # 角色扮演对话流接口
 │   │   │   │   ├── scene/route.ts         # 场景表达翻译接口
