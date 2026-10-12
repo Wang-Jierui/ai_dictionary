@@ -1,7 +1,9 @@
-// Free Dictionary API response types
+// Normalized dictionary data shared by providers, cached entries, and the UI.
 export interface DictionaryPhonetic {
   text?: string
   audio?: string
+  audioAlternatives?: string[]
+  label?: string
   sourceUrl?: string
 }
 
@@ -23,8 +25,15 @@ export interface DictionaryEntry {
   word: string
   phonetic?: string
   phonetics: DictionaryPhonetic[]
+  // Set only after successfully checking the English page for pronunciation.
+  pronunciationCheckedAt?: string
   origin?: string
   meanings: DictionaryMeaning[]
+  source?: {
+    name: string
+    url: string
+    license?: { name: string; url: string }
+  }
 }
 
 // AI-enhanced word data

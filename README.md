@@ -19,6 +19,20 @@
 
 开发验证：`npm run lint`、`npm run typecheck`、`npm run test`、`npm run build`。
 
+## 词典 API 超时与排查
+
+基础释义以 [Wiktionary REST API](https://en.wiktionary.org/api/rest_v1/page/definition/hello) 为来源，请求地址为 `https://en.wiktionary.org/api/rest_v1/page/definition/{word}`，AI 详解同时生成。只提取 `en` 英语词条，将 HTML 释义和例句转为纯文本，并标注词条链接与 CC BY-SA 4.0 许可。
+
+发音通过 [MediaWiki 页面 REST 接口](https://www.mediawiki.org/wiki/API:REST_API/Reference#Get_HTML) `https://en.wiktionary.org/w/rest.php/v1/page/{word}/html` 补充，只提取英语 Pronunciation 小节的 IPA 和录音，过滤其他语言与韵脚。录音优先选用 MP3，播放失败时尝试同一录音的其他可用格式；同一文件的不同格式合并，并保留音频文件的来源及许可链接。首页、生词本详情、复习页和批量结果有音标就展示，有音频就提供播放；多种发音可展开查看。没有的数据不做推测补全。
+
+整个词典查询最多等待 5 秒（包含响应正文与发音补充），其中发音请求最多等待 3 秒。发音接口失败或超时仍返回已取得的释义；释义接口超时或异常时仍返回并保存 AI 详解，页面单独提示词典状态。旧词典来源的数据库缓存会在下次查词时更新释义，旧版 Wiktionary 缓存也会补查发音；已有 AI 解释、图片、笔记和复习进度继续使用，上游不可用时保留旧缓存。
+
+- 同一服务进程内，同词的并发请求会合并；成功释义缓存 1 小时，最多缓存 500 个词。发音补查失败时缩短为 5 分钟，以便后续重试；正常词条没有发音也记为已检查，避免每次重复请求。释义失败结果不缓存，下次查询可以恢复。
+- `/api/dictionary` 用 `code` 区分 `NOT_FOUND`（404）、`TIMEOUT`（504）、`RATE_LIMITED`（503），以及连接、上游服务和响应格式错误（502）。词典返回 404，或词条没有可用英语释义时，显示未收录。
+- 服务日志中的 `[dictionary-api] Lookup failed` 记录单词、错误类型、耗时、上游状态或网络错误码，便于区分接口慢、限流、DNS 和连接故障。Docker 可通过 `docker compose logs app` 查看。
+- 词典恢复后，再次查询可以补全先前仅保存了 AI 详解的词条。
+- 请求包含应用专用 `User-Agent`；可在 `.env` 中设置 `WIKTIONARY_USER_AGENT`，填写带有自己网站或邮箱的标识，Docker Compose 会将其传入应用容器。参见 [Wikimedia User-Agent 说明](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy)。
+
 ## 🚀 快速启动 (Docker 部署)
 
 强烈推荐使用 Docker Compose 一键启动（包含自动数据库迁移）：

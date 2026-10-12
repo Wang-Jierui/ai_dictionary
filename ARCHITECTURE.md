@@ -33,7 +33,7 @@ sequenceDiagram
     participant User as 用户 (Frontend)
     participant API as Next.js API Routes
     participant DB as PostgreSQL (Prisma)
-    participant FreeDict as Free Dictionary API
+    participant Wiktionary as Wiktionary REST API
     participant LLM as AI Provider (OpenAI)
 
     User->>API: 搜索单词 "apple"
@@ -50,9 +50,11 @@ sequenceDiagram
             API-->>User: 返回完整 JSON 结果
         end
     and 基础词典数据获取
-        API->>FreeDict: 获取音标、基础释义、发音音频
-        FreeDict-->>API: 返回 DictionaryEntry
-        API-->>User: 渲染基础卡片和发音按钮
+        API->>Wiktionary: 获取英语释义、词性和例句（5 秒超时）
+        Wiktionary-->>API: 返回多语言释义 JSON
+        API->>Wiktionary: 补查页面 HTML 中的英语 IPA 和音频（最多 3 秒，共用 5 秒上限）
+        Wiktionary-->>API: 返回页面 HTML；失败仍保留释义
+        API-->>User: 转换为 DictionaryEntry 并渲染基础卡片与来源
     end
     
     %% 自动保存
@@ -117,7 +119,7 @@ ai_dictionary/
 │   │   │   │   ├── roleplay/route.ts      # 角色扮演对话流接口
 │   │   │   │   ├── scene/route.ts         # 场景表达翻译接口
 │   │   │   │   └── story/route.ts         # 串词故事生成接口
-│   │   │   ├── dictionary/route.ts        # 请求 Free Dictionary 免费公共API
+│   │   │   ├── dictionary/route.ts        # 请求 Wiktionary REST API，区分超时、限流和未收录
 │   │   │   ├── settings/route.ts          # 获取/更新用户设置
 │   │   │   └── vocabulary/
 │   │   │       ├── route.ts               # 获取/删除生词本
@@ -136,6 +138,7 @@ ai_dictionary/
 │   │   ├── ai.ts               # 核心逻辑：定义所有 AI Prompt 模板和 Provider 初始化
 │   │   ├── ai-parser.ts        # 查词 AI 响应解析与宽松结构化转换
 │   │   ├── lookup-service.ts   # 查词缓存、解析、保存的服务层封装
+│   │   ├── dictionary-api.ts   # Wiktionary 英语释义与发音适配、HTML 解析、超时与请求缓存
 │   │   ├── prisma.ts           # Prisma Client 全局单例实例化 (防热更新泄露)
 │   │   └── utils.ts            # Tailwind 类名合并工具
 │   └── types/
@@ -153,7 +156,7 @@ ai_dictionary/
 
 1. **`Vocabulary` (生词/缓存表)**
    - `word`: 单词（唯一索引）。
-   - `dictData`: JSON 格式，存储 Free Dictionary API 的原始返回值（发音、音标等）。
+   - `dictData`: JSON 格式，存储规范化的 DictionaryEntry（英语释义、例句、可用的 IPA 与音频、Wiktionary 词条链接与许可）。释义使用 definition 接口，发音从页面 HTML REST 接口的英语 Pronunciation 小节补充；录音单独保留来源及许可链接。`pronunciationCheckedAt` 标记已检查发音的缓存，旧版缓存在下次查词时补查，已有 AI 数据直接复用。发音获取失败不影响释义，并在 5 分钟进程缓存过期后重试。
    - `aiData`: JSON 格式，存储 AI 生成的完整解释（多义词、例句、记忆法等）。
    - `chineseDefinition`: 独立抽取的中文释义，用于在生词本列表中快速展示。
    - *作用*：不仅作为用户的生词本，同时作为全局查询缓存。

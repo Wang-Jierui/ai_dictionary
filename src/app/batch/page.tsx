@@ -1,5 +1,8 @@
 "use client"
 
+import { DictionarySource } from "@/components/dictionary-source"
+import { WordPronunciation } from "@/components/word-pronunciation"
+
 import { useCallback, useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
@@ -445,11 +448,6 @@ export default function BatchPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 min-w-0">
                         <span className="font-medium">{result.word}</span>
-                        {result.dictData?.phonetic && (
-                          <span className="text-xs text-muted-foreground font-mono">
-                            {result.dictData.phonetic}
-                          </span>
-                        )}
                         {result.cached && (
                           <Badge className="text-[10px] h-5 px-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100">
                             已缓存
@@ -471,6 +469,7 @@ export default function BatchPage() {
                           </Badge>
                         )}
                       </div>
+                      <WordPronunciation data={result.dictData} />
                       {result.status === "error" ? (
                         <p className="text-sm text-red-600 mt-1">
                           {result.code === "PARSE_ERROR"
@@ -490,6 +489,7 @@ export default function BatchPage() {
                            "暂无释义"}
                         </p>
                       )}
+                      <DictionarySource data={result.dictData} />
                     </div>
                   </div>
                   

@@ -65,9 +65,32 @@ export async function findCachedLookup(word: string): Promise<CachedLookup | nul
 
   if (!cached?.aiData) return null
 
+  let dictData = cached.dictData ? (cached.dictData as unknown as DictionaryEntry) : null
+  const isWiktionary = dictData?.source?.name === "Wiktionary"
+  if (!isWiktionary || !dictData?.pronunciationCheckedAt) {
+    // Refresh legacy definitions and backfill pronunciation without another AI generation.
+    // Keep the cached result usable if the new source or persistence fails.
+    try {
+      const refreshed = await fetchDictionaryEntry(word)
+      if (refreshed && (!isWiktionary || refreshed.pronunciationCheckedAt)) {
+        dictData = refreshed
+        await prisma.vocabulary.update({
+          where: { word },
+          data: {
+            dictData: toJsonInput(refreshed),
+            briefDefinition: firstBriefDefinition(refreshed),
+            phonetic: firstPhonetic(refreshed),
+          },
+        })
+      }
+    } catch {
+      console.warn("[lookup-service] Dictionary cache refresh failed", { word })
+    }
+  }
+
   return {
     cached: true,
-    dictData: cached.dictData ? (cached.dictData as unknown as DictionaryEntry) : null,
+    dictData,
     aiData: cached.aiData as unknown as AIWordData,
     imageData: cached.imageData,
     imageMode: cached.imageMode,

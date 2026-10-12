@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
-import { BookOpen, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Edit3, Loader2, RotateCcw, Save, Search, Volume2, X } from "lucide-react"
+import { BookOpen, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Edit3, Loader2, RotateCcw, Save, Search, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AiLearningSection } from "@/components/ai-learning-sections"
 import { WordChatPanel } from "@/components/word-chat-panel"
+import { WordPronunciation } from "@/components/word-pronunciation"
 import { REVIEW_GRADES, type AISectionId, type ReviewGradeValue } from "@/lib/constants"
 import { DEFAULT_SECTION_ORDER, sanitizeSectionOrder } from "@/lib/section-order"
 import type { VocabularyEntry, VocabularyReviewState } from "@/types/dictionary"
@@ -705,11 +706,6 @@ export default function ReviewPage() {
     </div>
   )
 
-  const playAudio = (url: string) => {
-    const audioUrl = url.startsWith("//") ? `https:${url}` : url
-    void new Audio(audioUrl).play()
-  }
-
   if (loading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />加载复习队列...</div>
   }
@@ -913,12 +909,9 @@ export default function ReviewPage() {
               <div className="space-y-1">
                 <Badge className="border bg-background text-foreground">{currentIndex + 1} / {queue.length}</Badge>
                 <CardTitle className="text-4xl font-bold tracking-tight">{currentRow.word}</CardTitle>
-                {(currentDetail?.phonetic ?? currentRow.phonetic) && <p className="font-mono text-sm text-muted-foreground">{currentDetail?.phonetic ?? currentRow.phonetic}</p>}
+                <WordPronunciation data={currentDetail?.dictData} fallbackPhonetic={currentDetail?.phonetic ?? currentRow.phonetic} />
               </div>
               <div className="flex flex-wrap gap-2">
-                {currentDetail?.dictData?.phonetics?.filter(item => item.audio).map((item, index) => (
-                  <Button key={`${item.audio}-${index}`} variant="outline" size="icon" onClick={() => playAudio(item.audio ?? "")}><Volume2 className="h-4 w-4" /></Button>
-                ))}
                 <Button variant="outline" onClick={goToPreviousReview} disabled={currentIndex <= 0}><ChevronLeft className="h-4 w-4" />上一个</Button>
                 <Button variant="ghost" onClick={skipCurrent}>跳过<ChevronRight className="h-4 w-4" /></Button>
               </div>

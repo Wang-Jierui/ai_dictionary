@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation"
 import { Suspense, useState, useRef, useEffect, useCallback } from "react"
-import { Volume2, RefreshCw, Swords, Loader2, Sparkles, History as HistoryIcon, BookOpen, Languages, Trash2, Edit3, Save } from "lucide-react"
+import { RefreshCw, Swords, Loader2, Sparkles, History as HistoryIcon, BookOpen, Languages, Trash2, Edit3, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -10,12 +10,20 @@ import { Textarea } from "@/components/ui/textarea"
 import { AiLearningSection, WordImagePanel, type WordImageMode } from "@/components/ai-learning-sections"
 import { WordChatPanel } from "@/components/word-chat-panel"
 import { ReadingWorkspace } from "@/components/reading-workspace"
+import { DictionarySource } from "@/components/dictionary-source"
+import { WordPronunciation } from "@/components/word-pronunciation"
 import type { AISectionId } from "@/lib/constants"
 import { DEFAULT_SECTION_ORDER, sanitizeSectionOrder } from "@/lib/section-order"
 import type { DictionaryEntry, AIWordData } from "@/types/dictionary"
 
 const HISTORY_KEY = "ai-dict-search-history"
 const MAX_HISTORY = 8
+const DICTIONARY_ERROR_MESSAGES: Record<string, string> = {
+  NOT_FOUND: "词典未收录该词，可先参考 AI 解释。",
+  TIMEOUT: "词典服务响应超时，可先参考 AI 解释。",
+  RATE_LIMITED: "词典服务请求过于频繁，请稍后重试。",
+}
+const DICTIONARY_UNAVAILABLE_MESSAGE = "词典暂时不可用，可先参考 AI 解释。"
 
 function getHistory(): string[] {
   if (typeof window === "undefined") return []
@@ -51,6 +59,7 @@ interface WordResult {
   loadingDict: boolean
   loadingAI: boolean
   error: string
+  dictionaryError: string
   fromCache: boolean
 }
 
@@ -84,6 +93,7 @@ function HomeContent() {
   const loadingDict = activeResult?.loadingDict ?? false
   const loadingAI = activeResult?.loadingAI ?? false
   const error = activeResult?.error ?? ""
+  const dictionaryError = activeResult?.dictionaryError ?? ""
   const fromCache = activeResult?.fromCache ?? false
 
   useEffect(() => {
@@ -111,7 +121,7 @@ function HomeContent() {
 
   const autoSave = useCallback(async (word: string, dict: DictionaryEntry | null, ai: AIWordData) => {
     const briefDef = dict?.meanings[0]?.definitions[0]?.definition ?? ""
-    await fetch("/api/vocabulary/save", {
+    const response = await fetch("/api/vocabulary/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -123,6 +133,7 @@ function HomeContent() {
         aiData: ai,
       }),
     })
+    if (!response.ok) throw new Error("Failed to save dictionary data")
   }, [])
 
   const searchWord = useCallback(async (word: string, options?: { forceRefresh?: boolean }) => {
@@ -140,14 +151,13 @@ function HomeContent() {
       imageData: null, imageMode: null, generatingImage: false,
       notes: "",
       loadingDict: true, loadingAI: true,
-      error: "", fromCache: false,
+      error: "", dictionaryError: "", fromCache: false,
     }
     setResults(prev => new Map(prev).set(trimmed, initial))
 
     let fetchedDict: DictionaryEntry | null = null
     let fetchedAi: AIWordData | null = null
-    let isCached = false
-    let aiParseError = false
+    let shouldSaveDictionary = false
 
     const aiPromise = fetch("/api/ai/lookup", {
       method: "POST",
@@ -156,9 +166,6 @@ function HomeContent() {
     }).then(async res => {
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as LookupResponse
-        if (data.code === "PARSE_ERROR") {
-          aiParseError = true
-        }
         const message = data.code === "PARSE_ERROR"
           ? "AI 返回的单词数据格式不正确，无法解析。请稍后重试。"
           : data.error || "AI 查询失败"
@@ -167,51 +174,57 @@ function HomeContent() {
       }
 
       const data = await res.json() as LookupResponse
-      if (data.cached) {
-        isCached = true
-        const imageMode = data.imageMode === "mood" || data.imageMode === "meme" ? data.imageMode : null
-        const patch: Partial<WordResult> = {
-          fromCache: true,
-          aiData: data.aiData ?? null,
-          imageData: data.imageData ?? null,
-          imageMode,
-          notes: data.notes ?? "",
-          loadingAI: false,
-        }
-        if (data.dictData) {
-          fetchedDict = data.dictData
-          patch.dictData = fetchedDict
-          patch.loadingDict = false
-        }
-        updateResult(trimmed, patch)
-        return
+      fetchedAi = data.aiData ?? null
+      shouldSaveDictionary = !data.dictData
+      fetchedDict = fetchedDict ?? data.dictData ?? null
+      const imageMode = data.imageMode === "mood" || data.imageMode === "meme" ? data.imageMode : null
+      const patch: Partial<WordResult> = {
+        fromCache: data.cached === true,
+        aiData: fetchedAi,
+        imageData: data.imageData ?? null,
+        imageMode,
+        notes: data.notes ?? "",
+        loadingAI: false,
       }
+      if (fetchedDict) {
+        patch.dictData = fetchedDict
+        patch.loadingDict = false
+        patch.dictionaryError = ""
+      }
+      updateResult(trimmed, patch)
+    }).catch(() => updateResult(trimmed, { error: "AI 查询失败，请检查网络后重试。", loadingAI: false }))
 
-      if (data.aiData) fetchedAi = data.aiData
-      updateResult(trimmed, { aiData: fetchedAi, notes: data.notes ?? "", loadingAI: false })
-    }).catch(() => updateResult(trimmed, { loadingAI: false }))
-
-    const dictPromise = fetch(`/api/dictionary?word=${encodeURIComponent(trimmed)}`)
+    const dictPromise = fetch(`/api/dictionary?word=${encodeURIComponent(trimmed)}`, {
+      signal: AbortSignal.timeout(10000),
+    })
       .then(async res => {
-        if (!res.ok) throw new Error("未找到该单词")
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({})) as LookupResponse
+          throw new Error(DICTIONARY_ERROR_MESSAGES[data.code ?? ""] ?? DICTIONARY_UNAVAILABLE_MESSAGE)
+        }
         return res.json() as Promise<DictionaryEntry>
       })
       .then(data => {
         fetchedDict = data
-        updateResult(trimmed, { dictData: data, loadingDict: false })
+        updateResult(trimmed, { dictData: data, loadingDict: false, dictionaryError: "" })
       })
       .catch(err => {
         const patch: Partial<WordResult> = { loadingDict: false }
-        if (!aiParseError && !isCached) {
-          patch.error = err.message
+        if (!fetchedDict) {
+          patch.dictionaryError = err.name === "TimeoutError"
+            ? DICTIONARY_ERROR_MESSAGES.TIMEOUT
+            : Object.values(DICTIONARY_ERROR_MESSAGES).includes(err.message) ? err.message : DICTIONARY_UNAVAILABLE_MESSAGE
         }
         updateResult(trimmed, patch)
       })
 
     await Promise.all([dictPromise, aiPromise])
 
-    if (fetchedDict && fetchedAi && !isCached) {
-      autoSave(trimmed, fetchedDict, fetchedAi)
+    // Repair entries saved during a dictionary outage, including cached AI results.
+    if (fetchedDict && fetchedAi && shouldSaveDictionary) {
+      void autoSave(trimmed, fetchedDict, fetchedAi).catch(() => {
+        updateResult(trimmed, { dictionaryError: "词典释义已获取，但保存失败，请稍后重新查询。" })
+      })
     }
   }, [autoSave, updateResult])
 
@@ -221,11 +234,6 @@ function HomeContent() {
       void Promise.resolve().then(() => searchWord(wordParam))
     }
   }, [wordParam, searchWord])
-
-  const playAudio = (url: string) => {
-    const audioUrl = url.startsWith("//") ? `https:${url}` : url
-    new Audio(audioUrl).play()
-  }
 
   const removeResult = (word: string) => {
     setResults(prev => {
@@ -374,6 +382,18 @@ function HomeContent() {
         </Card>
       )}
 
+      {dictionaryError && (
+        <Card>
+          <CardContent className="pt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
+            <span role="status">{dictionaryError}</span>
+            <Button variant="outline" size="sm" onClick={retryCurrentWord} disabled={loadingDict || loadingAI}>
+              <RefreshCw className="h-4 w-4" />
+              重新查询
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {loadingDict && !dictData && (
         <Card>
           <CardContent className="pt-6 flex items-center justify-center gap-2 text-muted-foreground">
@@ -389,21 +409,8 @@ function HomeContent() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <CardTitle className="text-2xl font-bold">{dictData.word}</CardTitle>
-                <div className="mt-1 flex items-center gap-3 text-muted-foreground">
-                  {dictData.phonetic && (
-                    <span className="font-mono text-sm">{dictData.phonetic}</span>
-                  )}
-                  {dictData.phonetics?.filter(p => p.audio).map((p, i) => (
-                    <Button
-                      key={i}
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => playAudio(p.audio!)}
-                    >
-                      <Volume2 className="h-4 w-4" />
-                    </Button>
-                  ))}
+                <div className="mt-1 flex flex-wrap items-center gap-3 text-muted-foreground">
+                  <WordPronunciation data={dictData} />
                   {fromCache && (
                     <Badge className="text-xs bg-emerald-100 text-emerald-700">已缓存</Badge>
                   )}
@@ -469,6 +476,7 @@ function HomeContent() {
             {dictData.origin && (
               <p className="text-xs text-muted-foreground border-t pt-3">{dictData.origin}</p>
             )}
+            <DictionarySource data={dictData} />
           </CardContent>
         </Card>
       )}

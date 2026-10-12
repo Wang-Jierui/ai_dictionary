@@ -1,5 +1,8 @@
 "use client"
 
+import { DictionarySource } from "@/components/dictionary-source"
+import { WordPronunciation } from "@/components/word-pronunciation"
+
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import {
   BookOpen,
@@ -18,7 +21,6 @@ import {
   Sparkles,
   Swords,
   Trash2,
-  Volume2,
   X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -887,11 +889,6 @@ export default function VocabularyPage() {
     }
   }
 
-  const playAudio = (url: string) => {
-    const audioUrl = url.startsWith("//") ? `https:${url}` : url
-    void new Audio(audioUrl).play()
-  }
-
   const renderReader = () => {
     if (!expandedId) {
       return (
@@ -950,13 +947,8 @@ export default function VocabularyPage() {
                 <div className="min-w-0 space-y-2">
                   <div className="flex min-w-0 flex-wrap items-center gap-3">
                     <h2 className="text-2xl font-bold tracking-tight">{expandedData.word}</h2>
-                    {(dictData?.phonetic ?? expandedData.phonetic) && <span className="font-mono text-sm text-muted-foreground">{dictData?.phonetic ?? expandedData.phonetic}</span>}
-                    {dictData?.phonetics?.filter(item => item.audio).map((item, index) => (
-                      <Button key={`${item.audio}-${index}`} variant="ghost" size="icon" className="h-7 w-7" onClick={() => playAudio(item.audio ?? "")}>
-                        <Volume2 className="h-4 w-4" />
-                      </Button>
-                    ))}
                   </div>
+                  <WordPronunciation data={dictData} fallbackPhonetic={expandedData.phonetic} />
                   <p className="text-sm leading-relaxed text-muted-foreground">{expandedData.briefDefinition}</p>
                 </div>
                 <Button variant="outline" size="sm" onClick={() => { window.location.href = `/practice/roleplay?word=${encodeURIComponent(expandedData.word)}` }}>
@@ -1006,6 +998,7 @@ export default function VocabularyPage() {
                   ))}
                 </div>
               ) : null}
+              <DictionarySource data={dictData} />
             </div>
 
             {aiData && (

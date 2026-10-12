@@ -31,6 +31,7 @@ vi.mock("@/lib/prisma", () => ({
     vocabulary: {
       findUnique: vi.fn(),
       upsert: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
     },
     searchHistory: {
       create: vi.fn().mockResolvedValue({}),
@@ -43,10 +44,12 @@ vi.mock("@/lib/prisma", () => ({
 }))
 
 import { generateText } from "ai"
+import { lookupWord } from "@/lib/dictionary-api"
 
 describe("POST /api/ai/lookup", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(lookupWord).mockResolvedValue(null)
   })
 
   it("returns validated JSON for fresh lookups", async () => {
@@ -113,6 +116,26 @@ describe("POST /api/ai/lookup", () => {
     expect(response.status).toBe(422)
     expect(data.code).toBe("PARSE_ERROR")
     expect(prisma.vocabulary.upsert).not.toHaveBeenCalled()
+  })
+
+  it("refreshes cached definitions from Wiktionary without generating AI again", async () => {
+    const aiData = JSON.parse(validAiJson)
+    const dictData = {
+      word: "apple", phonetics: [],
+      meanings: [{ partOfSpeech: "noun", definitions: [{ definition: "a fruit", synonyms: [], antonyms: [] }], synonyms: [], antonyms: [] }],
+      source: { name: "Wiktionary", url: "https://en.wiktionary.org/wiki/apple#English" },
+    }
+    vi.mocked(prisma.vocabulary.findUnique).mockResolvedValue({ aiData, dictData: null, notes: "keep note" } as never)
+    vi.mocked(lookupWord).mockResolvedValue(dictData)
+
+    const response = await POST(new Request("http://localhost/api/ai/lookup", {
+      method: "POST", body: JSON.stringify({ word: "apple" }),
+    }))
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ cached: true, dictData, aiData, notes: "keep note" })
+    expect(generateText).not.toHaveBeenCalled()
+    expect(prisma.vocabulary.update).toHaveBeenCalledTimes(1)
   })
 
   it("returns 400 for missing word", async () => {
